@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { HOMEPAGE_FILMS } from "../lib/homepageFilms";
+import { HOMEPAGE_FILMS } from "../../lib/homepageFilms";
 
 type FilmData = {
   posterUrl: string | null;
