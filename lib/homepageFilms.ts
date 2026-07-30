@@ -1,4 +1,3 @@
-@'
 // Mixed-genre selection for the FilmStripHero banner/screen loop: a few
 // rom-coms, comedy, action, and sci-fi, spanning 2000-2026. TMDB IDs
 // verified directly against themoviedb.org, not guessed.
@@ -14,4 +13,3 @@ export const HOMEPAGE_FILMS = [
   { film: "Interstellar", tmdbId: 157336, line: "Love transcends time and space" },
   { film: "Dune", tmdbId: 438631, line: "Fear is the mind-killer" },
 ];
-'@ | Set-Content lib\homepageFilms.ts
