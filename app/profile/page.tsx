@@ -120,10 +120,18 @@ export default function ProfilePage() {
   async function handleDeleteAccount() {
     if (!userId) return;
     setDeleting(true);
+    // The server identifies the account from this token, so a client can
+    // only ever delete itself.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      setDeleting(false);
+      router.push("/login");
+      return;
+    }
     const res = await fetch("/api/delete-account", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
     setDeleting(false);
     if (res.ok) {
@@ -231,7 +239,7 @@ export default function ProfilePage() {
                 <div key={fav.movie_id}>
                   <div onClick={() => handleOpenMovie(fav.movie_id, fav.movie_title, fav.poster_path)} style={{ cursor: "pointer" }}>
                     {fav.poster_path ? (
-                      <img src={`https://image.tmdb.org/t/p/w500${fav.poster_path}`} alt={fav.movie_title}
+                      <img src={`https://image.tmdb.org/t/p/w780${fav.poster_path}`} alt={fav.movie_title}
                         style={{ width: "100%", height: 200, objectFit: "cover", borderRadius: 6 }} />
                     ) : (
                       <div style={{ width: "100%", height: 200, background: "#181818", borderRadius: 6 }} />

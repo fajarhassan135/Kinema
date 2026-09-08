@@ -50,9 +50,17 @@ export default function ReviewsPage() {
     });
   }, [router]);
 
+  // Switching tab or user starts a fresh load; adjusted during render behind a
+  // key comparison so the effect below stays free of synchronous setState.
+  const loadKey = `${userId ?? ""}|${tab}`;
+  const [renderedLoadKey, setRenderedLoadKey] = useState(loadKey);
+  if (renderedLoadKey !== loadKey) {
+    setRenderedLoadKey(loadKey);
+    setLoading(true);
+  }
+
   useEffect(() => {
     if (checkingAuth || !userId) return;
-    setLoading(true);
 
     if (tab === "mine") {
       supabase
@@ -184,7 +192,7 @@ export default function ReviewsPage() {
                 >
                   {review.poster_path ? (
                     <img
-                      src={`https://image.tmdb.org/t/p/w500${review.poster_path}`}
+                      src={`https://image.tmdb.org/t/p/w780${review.poster_path}`}
                       alt={review.movie_title}
                       style={{ width: 80, height: 120, objectFit: "cover", borderRadius: 6 }}
                     />

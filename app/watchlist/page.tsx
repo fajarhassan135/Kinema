@@ -20,6 +20,17 @@ export default function WatchlistPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  async function loadWatchlist(uid: string) {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("watchlist")
+      .select("*")
+      .eq("user_id", uid)
+      .order("created_at", { ascending: false });
+    if (!error && data) setItems(data as WatchlistItem[]);
+    setLoading(false);
+  }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       const uid = data.session?.user?.id ?? null;
@@ -32,17 +43,6 @@ export default function WatchlistPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function loadWatchlist(uid: string) {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("watchlist")
-      .select("*")
-      .eq("user_id", uid)
-      .order("created_at", { ascending: false });
-    if (!error && data) setItems(data as WatchlistItem[]);
-    setLoading(false);
-  }
 
   async function removeFromWatchlist(id: string) {
     setRemovingId(id);
@@ -107,7 +107,7 @@ export default function WatchlistPage() {
             Your Watchlist
           </h1>
           <p style={{ color: "#999", fontSize: "1rem", margin: 0 }}>
-            Every film waiting for its moment — your diary of what's next.
+            Every film waiting for its moment — your diary of what&apos;s next.
           </p>
         </div>
 
@@ -119,7 +119,7 @@ export default function WatchlistPage() {
               Nothing here yet.
             </p>
             <p style={{ color: "#777", fontSize: "0.95rem" }}>
-              Add films you want to watch later, and they'll show up here.
+              Add films you want to watch later, and they&apos;ll show up here.
             </p>
             <Link href="/" className="watchlist-empty-btn">
               Browse films
@@ -140,7 +140,7 @@ export default function WatchlistPage() {
                 </button>
                 {item.poster_path ? (
                   <img
-                    src={`https://image.tmdb.org/t/p/w500${item.poster_path}`}
+                    src={`https://image.tmdb.org/t/p/w780${item.poster_path}`}
                     alt={item.movie_title}
                     style={{ width: "100%", aspectRatio: "2 / 3", objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 32px 0 #1a1a1a" }}
                   />

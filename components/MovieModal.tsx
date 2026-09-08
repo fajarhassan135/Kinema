@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type Movie = {
@@ -151,11 +151,38 @@ export default function MovieModal({ movie, onClose }: Props) {
     color: "#fff",
   });
 
+  // A dialog you can only dismiss with the mouse is a dead end for keyboard
+  // users, so Escape closes it and focus moves in and back out again.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose]);
+
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#111", borderRadius: 12, maxWidth: 680, width: "100%", display: "flex", gap: 24, padding: 28, maxHeight: "90vh", overflowY: "auto" }}>
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={movie.title}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#111", borderRadius: 12, maxWidth: 680, width: "100%", display: "flex", gap: 24, padding: 28, maxHeight: "90vh", overflowY: "auto", outline: "none" }}
+      >
         {movie.poster_path && (
-          <img src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`} alt={movie.title}
+          <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
             style={{ width: 160, height: 240, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
         )}
         <div style={{ flex: 1 }}>
@@ -189,7 +216,7 @@ export default function MovieModal({ movie, onClose }: Props) {
                   {favoritesList.map((f) => (
                     <button key={f.movie_id} onClick={() => replaceFavorite(f.movie_id)}
                       style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", background: "none", border: "none", color: "#ccc", cursor: "pointer" }}>
-                      Replace "{f.movie_title}"
+                      Replace &quot;{f.movie_title}&quot;
                     </button>
                   ))}
                   <button onClick={() => setShowReplacePicker(false)} style={{ marginTop: 8, background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: "0.8rem" }}>

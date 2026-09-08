@@ -1,8 +1,31 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
+
+/** Minimum Supabase allows is 6; 10 with some variety is a meaningful floor. */
+const MIN_PASSWORD_LENGTH = 10;
+
+/**
+ * Rejects the passwords that actually get broken: too short, single
+ * character class, or one of the handful everyone tries first. Supabase
+ * still enforces its own rules server-side; this is the fast, clear failure.
+ */
+function passwordProblem(password: string): string | null {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+  }
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((re) => re.test(password)).length;
+  if (classes < 3) {
+    return "Use at least three of: lowercase, uppercase, numbers, symbols.";
+  }
+  const common = ["password", "12345678", "qwerty", "letmein", "welcome", "iloveyou", "admin"];
+  if (common.some((c) => password.toLowerCase().includes(c))) {
+    return "That password is too easy to guess.";
+  }
+  return null;
+}
 
 type Mode = "login" | "signup";
 type Step = "credentials" | "verify";
@@ -17,23 +40,77 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Someone already signed in has no business on the login screen.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) router.replace("/dashboard");
+    });
+  }, [router]);
+
+  // Supabase rate-limits resends server-side; this stops the user hammering
+  // the button and getting an opaque error back.
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setTimeout(() => setResendCooldown((n) => n - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendCooldown]);
 
   async function handleSubmitCredentials(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // A stray space or a capital letter should not read as wrong password.
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setError("Enter your email address.");
+      return;
+    }
     setLoading(true);
 
     if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({ email, password });
+      const problem = passwordProblem(password);
+      if (problem) {
+        setLoading(false);
+        setError(problem);
+        return;
+      }
+      const { data, error } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+      });
       setLoading(false);
       if (error) {
         setError(error.message);
         return;
       }
+
+      // Supabase does not error on a duplicate signup — that would let
+      // anyone enumerate registered emails. It returns a user with no
+      // identities instead, which is the only way to tell.
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        setMode("login");
+        setError("That email already has an account. Log in instead.");
+        return;
+      }
+
+      // With email confirmation switched off, signUp returns a live session
+      // and no code is ever sent — sending the user to the code step would
+      // strand them waiting for an email that never arrives.
+      if (data.session) {
+        router.push("/dashboard");
+        return;
+      }
+
       setStep("verify");
+      setResendCooldown(30);
       setInfo("We sent a verification code to your email. It expires in 15 minutes.");
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
       setLoading(false);
       if (error) {
         setError(error.message);
@@ -49,8 +126,8 @@ export default function LoginPage() {
     setLoading(true);
 
     const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: code,
+      email: email.trim().toLowerCase(),
+      token: code.trim(),
       type: "signup",
     });
 
@@ -65,14 +142,16 @@ export default function LoginPage() {
   async function handleResendCode() {
     setError(null);
     setInfo(null);
+    if (resendCooldown > 0) return;
     const { error } = await supabase.auth.resend({
       type: "signup",
-      email,
+      email: email.trim().toLowerCase(),
     });
     if (error) {
       setError(error.message);
       return;
     }
+    setResendCooldown(30);
     setInfo("A new code has been sent.");
   }
 
@@ -110,6 +189,10 @@ export default function LoginPage() {
               <input
                 type="email"
                 required
+                autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
+                aria-label="Email"
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -118,13 +201,29 @@ export default function LoginPage() {
               <input
                 type="password"
                 required
-                minLength={6}
+                minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : 6}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                aria-label="Password"
+                aria-describedby={mode === "signup" ? "password-requirements" : undefined}
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #333", background: "#111", color: "#fff" }}
               />
-              {error && <p style={{ color: "#e07b7b", fontSize: "0.85rem", margin: 0 }}>{error}</p>}
+              {mode === "signup" && (
+                <p
+                  id="password-requirements"
+                  style={{ color: "#8a8a8a", fontSize: "0.78rem", margin: 0, lineHeight: 1.5 }}
+                >
+                  At least {MIN_PASSWORD_LENGTH} characters, mixing three of: lowercase,
+                  uppercase, numbers, symbols.
+                </p>
+              )}
+              {error && (
+                <p role="alert" style={{ color: "#e07b7b", fontSize: "0.85rem", margin: 0 }}>
+                  {error}
+                </p>
+              )}
               <button
                 type="submit"
                 disabled={loading}
@@ -144,6 +243,10 @@ export default function LoginPage() {
             <input
               type="text"
               required
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={10}
+              aria-label="Verification code"
               placeholder="Verification code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
@@ -160,9 +263,17 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={handleResendCode}
-              style={{ background: "none", border: "none", color: "#888", fontSize: "0.85rem", cursor: "pointer", textDecoration: "underline" }}
+              disabled={resendCooldown > 0}
+              style={{
+                background: "none",
+                border: "none",
+                color: resendCooldown > 0 ? "#555" : "#888",
+                fontSize: "0.85rem",
+                cursor: resendCooldown > 0 ? "not-allowed" : "pointer",
+                textDecoration: "underline",
+              }}
             >
-              Resend code
+              {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend code"}
             </button>
           </form>
         )}

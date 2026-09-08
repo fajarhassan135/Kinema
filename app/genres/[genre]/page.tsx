@@ -63,16 +63,22 @@ export default function GenrePage() {
     });
   }, [router]);
 
-  useEffect(() => {
+  // Changing genre or region starts a brand new list. React's documented way
+  // to react to a changed input is to adjust state during render behind a
+  // key comparison, rather than firing setState from an effect.
+  const listKey = `${genreSlug}|${region}`;
+  const [renderedListKey, setRenderedListKey] = useState(listKey);
+  if (renderedListKey !== listKey) {
+    setRenderedListKey(listKey);
     setMovies([]);
     setPage(1);
     setTotalPages(1);
-  }, [genreSlug, region]);
+    setLoading(true);
+  }
 
   const fetchPage = useCallback(
     (pageToFetch: number) => {
       if (!genreSlug) return;
-      setLoading(true);
       const regionParam = region !== "all" ? `&region=${region}` : "";
       fetch(`/api/movies?type=genre&genre=${genreSlug}&page=${pageToFetch}${regionParam}`)
         .then((res) => res.json())
@@ -97,6 +103,7 @@ export default function GenrePage() {
       if (entries[0].isIntersecting && !loading && page < totalPages) {
         const nextPage = page + 1;
         setPage(nextPage);
+        setLoading(true);
         fetchPage(nextPage);
       }
     });
@@ -173,7 +180,7 @@ export default function GenrePage() {
             <div key={`${movie.id}-${i}`} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
               {movie.poster_path ? (
                 <img
-                  src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
+                  src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`}
                   alt={movie.title}
                   style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }}
                 />
@@ -193,7 +200,7 @@ export default function GenrePage() {
         )}
         {!loading && page >= totalPages && movies.length > 0 && (
           <p style={{ color: "#555", textAlign: "center", marginTop: 20, fontSize: "0.85rem" }}>
-            You've reached the end.
+            You&apos;ve reached the end.
           </p>
         )}
       </main>

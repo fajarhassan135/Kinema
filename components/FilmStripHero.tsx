@@ -1,296 +1,434 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { HOMEPAGE_FILMS } from "@/lib/homepageFilms";
+import { playButtonPress, playChannelStatic, playPower, setMuted } from "@/lib/tvAudio";
+import { HEAD_PIVOT, RIG, useCharacterRig, type RigMood } from "@/lib/characterRig";
 
-type PosterData = {
-  posterUrl: string | null;
+type Channel = {
   film: string;
+  tmdbId: number;
+  quote: string;
+  /** Landscape backdrop, proxied. Falls back to the poster if there is none. */
+  imageUrl: string;
+  year: string;
 };
 
-type Stage = "neutral" | "happy" | "greeting";
+/**
+ * off      — tube dark, character powered down
+ * warmup   — the scanline bloom as the tube energises
+ * greeting — the character says hello (first power-on only)
+ * live     — channels are tuned in, quotes running as subtitles
+ */
+type Stage = "off" | "warmup" | "greeting" | "live";
 
-const STAGE_DURATIONS: Partial<Record<Stage, number>> = {
-  neutral: 1400,
-  happy: 1400,
+const WARMUP_MS = 900;
+const TYPE_CHAR_MS = 30;
+const HI_HOLD_MS = 900;
+const WELCOME_HOLD_MS = 1200;
+const GLITCH_MS = 340;
+const OSD_MS = 2200;
+
+/** The face is either looking at you or asleep. */
+type FaceState = "awake" | "asleep";
+
+const RIG_SRC = {
+  head: "/character/rig/head.png",
+  bodySign: "/character/rig/body-sign.png",
 };
 
-const TYPE_CHAR_MS = 32;
-const HI_HOLD_MS = 1100;
-const WELCOME_HOLD_MS = 1400;
-const GLITCH_MS = 320;
+/** Places a cut layer back at the exact spot it occupied in the source sprite. */
+function layerBox(box: { left: number; top: number; width: number; height: number }) {
+  return {
+    left: `${box.left}%`,
+    top: `${box.top}%`,
+    width: `${box.width}%`,
+    height: `${box.height}%`,
+  } as const;
+}
 
-const CHARACTER_SRC = "/character/banner.png";
-
-// Measured directly off banner.png via connected-component analysis.
+// Measured off banner.png by flood-filling the dark glass inside the bezel.
 // Percent convention: relative to the square stage.
-const SCREEN_BOX_PCT = { x: 27.4, y: 11.4, w: 49.4, h: 33.8 };
+//
+// The glass is not a symmetric rounded rectangle: the tube is drawn at a
+// slight tilt, the four corner radii differ, the bottom edge curves and the
+// left side bulges. No border-radius can describe that, so the screen is
+// clipped with SCREEN_MASK -- traced from that same flood fill, then eroded
+// ~10px and feathered. The erosion matters: the artwork paints a dark rim
+// just inside the glass where the bezel shadows the recessed tube, and a mask
+// running to the outermost glass pixel covered it, butting the picture
+// straight against the bright bezel. Keeping that rim, and letting the
+// picture dissolve into it, is what makes the screen look recessed rather
+// than pasted on.
+const SCREEN_BOX_PCT = { x: 27.3957, y: 11.3867, w: 49.4927, h: 33.9346 };
+const SCREEN_MASK = "/character/rig/screen-mask.png";
 const BANNER_BOX_PCT = { x: 10.7, y: 58.6, w: 80.7, h: 30.1 };
 
-const QUOTE_MAP: Record<string, string> = {
-  "The Notebook": "I am nothing special, of this I am sure.",
-  "La La Land": "Here's to the fools who dream.",
-  "Crazy Rich Asians": "It's not my job to make you feel like a man.",
-  "Superbad": "I am McLovin.",
-  "The Grand Budapest Hotel": "Rudeness is merely an expression of fear.",
-  "Mad Max: Fury Road": "What a lovely day!",
-  "John Wick": "Yeah. I'm thinking I'm back.",
-  "Inception": "You mustn't be afraid to dream a little bigger, darling.",
-  "Interstellar": "Do not go gentle into that good night.",
-  "Dune": "Fear is the mind-killer.",
-};
-
-// Real distortion this time: a buzzy low-frequency source pushed through
-// a WaveShaperNode with a hard-clipping curve. That's the actual technique
-// for harmonic distortion (adds overtones via nonlinear clipping) — a
-// harsh, gritty, buzzing crunch, not just a clean filtered noise sweep.
-// Duration matches GLITCH_MS so it's synced to the visual static overlay.
-function makeClippingCurve(amount: number) {
-  const n = 44100;
-  const curve = new Float32Array(n);
-  const deg = Math.PI / 180;
-  for (let i = 0; i < n; i++) {
-    const x = (i * 2) / n - 1;
-    curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
-  }
-  return curve;
-}
-
-function playChannelDistortion() {
-  try {
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx = new Ctx();
-    const dur = GLITCH_MS / 1000;
-    const now = ctx.currentTime;
-
-    const shaper = ctx.createWaveShaper();
-    shaper.curve = makeClippingCurve(650);
-    shaper.oversample = "4x";
-
-    // Buzzy source: a sawtooth with unstable, jittering pitch (like a
-    // signal that can't hold a lock) — this is what gives the clipped
-    // result its "old TV losing channel" character rather than just
-    // sounding like a fuzz pedal.
-    const osc = ctx.createOscillator();
-    osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(90, now);
-    for (let t = 0; t < dur; t += 0.02) {
-      osc.frequency.setValueAtTime(60 + Math.random() * 180, now + t);
-    }
-
-    const toneFilter = ctx.createBiquadFilter();
-    toneFilter.type = "bandpass";
-    toneFilter.Q.value = 0.6;
-    toneFilter.frequency.setValueAtTime(1800, now);
-    toneFilter.frequency.exponentialRampToValueAtTime(220, now + dur);
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-
-    osc.connect(shaper).connect(toneFilter).connect(gain).connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + dur);
-  } catch {
-    // no-op
-  }
-}
-
-// Relay-clack: two quick clicks in succession, like a real mechanical
-// switch engaging — ascending pitch on ON, descending on OFF.
-function playClick(on: boolean) {
-  try {
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-    const freqs = on ? [340, 560] : [560, 340];
-    freqs.forEach((f, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.value = f;
-      const t0 = now + i * 0.045;
-      gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.004);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.035);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t0);
-      osc.stop(t0 + 0.04);
-    });
-  } catch {
-    // Web Audio unavailable — fail silently, this is a nice-to-have.
-  }
-}
-
-export default function FilmStripHero() {
-  const [isOn, setIsOn] = useState(false);
-  const [stage, setStage] = useState<Stage>("neutral");
-  const [posters, setPosters] = useState<PosterData[]>([]);
-  const [posterIndex, setPosterIndex] = useState(0);
-  const [isGlitching, setIsGlitching] = useState(false);
-  const [greetingText, setGreetingText] = useState("");
-  const [greetingPopKey, setGreetingPopKey] = useState(0);
-  const [bannerText, setBannerText] = useState("");
-  const [hasGreeted, setHasGreeted] = useState(false);
-
-  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const seqTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const typeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const glitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+/**
+ * Types `text` out one character at a time.
+ *
+ * This owns its own state on purpose. When the parent held the partial string,
+ * every character re-rendered the whole hero — which restarted the CSS
+ * animations on the picture and the channel bug, so the Ken Burns pan and the
+ * OSD fade never actually played. Keeping the ticking state down here means the
+ * hero renders once per channel change instead of thirty times a second.
+ */
+const TypedText = memo(function TypedText({
+  text,
+  className,
+  charMs = TYPE_CHAR_MS,
+  onDone,
+}: {
+  text: string;
+  className?: string;
+  charMs?: number;
+  onDone?: () => void;
+}) {
+  // Storing the text alongside the progress lets a change of line reset the
+  // reveal during render, rather than firing a setState from inside an effect.
+  const [typed, setTyped] = useState({ text, shown: "" });
+  const shown = typed.text === text ? typed.shown : "";
+  const onDoneRef = useRef(onDone);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   useEffect(() => {
-    const img = new window.Image();
-    img.src = CHARACTER_SRC;
+    let i = 0;
+    const id = setInterval(() => {
+      i += 1;
+      setTyped({ text, shown: text.slice(0, i) });
+      if (i >= text.length) {
+        clearInterval(id);
+        onDoneRef.current?.();
+      }
+    }, charMs);
+    return () => clearInterval(id);
+  }, [text, charMs]);
+
+  return <span className={className}>{shown}</span>;
+});
+
+/**
+ * One remote key. Owns its own pressed state so the whole hero does not
+ * re-render on every press, and so the press feel is defined once.
+ */
+const RemoteButton = memo(function RemoteButton({
+  className,
+  label,
+  onPress,
+  disabled = false,
+  ariaPressed,
+  children,
+}: {
+  className: string;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  ariaPressed?: boolean;
+  children: React.ReactNode;
+}) {
+  const [down, setDown] = useState(false);
+  return (
+    <button
+      className={className}
+      aria-label={label}
+      aria-pressed={ariaPressed}
+      disabled={disabled}
+      data-pressed={down ? "true" : undefined}
+      onPointerDown={() => {
+        setDown(true);
+        playButtonPress(true);
+      }}
+      onPointerUp={() => {
+        setDown(false);
+        playButtonPress(false);
+      }}
+      onPointerLeave={() => setDown(false)}
+      onClick={onPress}
+    >
+      {children}
+    </button>
+  );
+});
+
+function proxied(path: string, size: string) {
+  return `/api/proxy-image?url=${encodeURIComponent(`https://image.tmdb.org/t/p/${size}${path}`)}`;
+}
+
+export default function FilmStripHero({
+  onSelectFilm,
+}: {
+  onSelectFilm?: (tmdbId: number) => void;
+}) {
+  const [stage, setStage] = useState<Stage>("off");
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [channelIndex, setChannelIndex] = useState(0);
+  const [isGlitching, setIsGlitching] = useState(false);
+  const [greetPhase, setGreetPhase] = useState<"hi" | "welcome">("hi");
+  const [pictureReady, setPictureReady] = useState(false);
+  const [channelsLoaded, setChannelsLoaded] = useState(false);
+  const [muted, setMutedState] = useState(false);
+  const [faceState, setFaceState] = useState<FaceState>("awake");
+
+  const isOn = stage !== "off";
+  const isLive = stage === "live";
+
+  // Once the character has introduced itself, later power-ons go straight to
+  // the channels — sitting through the same greeting every time gets old.
+  const hasGreetedOnce = useRef(false);
+
+  const seqTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const glitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearAllTimers = useCallback(() => {
+    if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
+    if (glitchTimerRef.current) clearTimeout(glitchTimerRef.current);
+    if (warmupTimerRef.current) clearTimeout(warmupTimerRef.current);
   }, []);
 
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [rigEnabled, setRigEnabled] = useState(true);
+
+  useEffect(() => {
+    Object.values(RIG_SRC).forEach((src) => {
+      const img = new window.Image();
+      img.src = src;
+    });
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setRigEnabled(!mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => clearAllTimers, [clearAllTimers]);
+
+  useEffect(() => {
+    setMuted(muted);
+  }, [muted]);
+
+  // Backdrops are landscape, which is what the CRT actually is — so the
+  // picture fills the tube edge to edge instead of being letterboxed the
+  // way a portrait poster was.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const results = await Promise.all(
-        HOMEPAGE_FILMS.map(async (f) => {
+        HOMEPAGE_FILMS.map(async (f): Promise<Channel | null> => {
           try {
             const res = await fetch(`/api/movies?type=by_id&id=${f.tmdbId}`);
             const data = await res.json();
-            const imagePath = data.movie?.poster_path || data.movie?.backdrop_path || null;
+            const movie = data.movie;
+            const backdrop = movie?.backdrop_path;
+            const poster = movie?.poster_path;
+            if (!backdrop && !poster) return null;
             return {
-              posterUrl: imagePath
-                ? `/api/proxy-image?url=${encodeURIComponent(`https://image.tmdb.org/t/p/w780${imagePath}`)}`
-                : null,
               film: f.film,
+              tmdbId: f.tmdbId,
+              quote: f.quote,
+              imageUrl: backdrop ? proxied(backdrop, "w1280") : proxied(poster, "w780"),
+              year: (movie?.release_date ?? "").slice(0, 4),
             };
           } catch {
-            return { posterUrl: null, film: f.film };
+            return null;
           }
         })
       );
-      if (!cancelled) setPosters(results.filter((p) => p.posterUrl));
+      if (!cancelled) {
+        setChannels(results.filter((c): c is Channel => c !== null));
+        setChannelsLoaded(true);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
+  // Warm-up always resolves into either the greeting or straight to live.
   useEffect(() => {
-    if (!isOn) return;
-    const order: Stage[] = ["neutral", "happy", "greeting"];
-    const currentIndex = order.indexOf(stage);
-    if (currentIndex === -1 || currentIndex === order.length - 1) return;
-    const duration = STAGE_DURATIONS[stage] ?? 1400;
-    advanceTimerRef.current = setTimeout(() => setStage(order[currentIndex + 1]), duration);
+    if (stage !== "warmup") return;
+    warmupTimerRef.current = setTimeout(() => {
+      setStage(hasGreetedOnce.current ? "live" : "greeting");
+    }, WARMUP_MS);
     return () => {
-      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+      if (warmupTimerRef.current) clearTimeout(warmupTimerRef.current);
     };
-  }, [stage, isOn]);
+  }, [stage]);
 
-  const typeText = useCallback((text: string, setter: (t: string) => void, onDone?: () => void) => {
-    setter("");
-    let i = 0;
-    if (typeTimerRef.current) clearInterval(typeTimerRef.current);
-    typeTimerRef.current = setInterval(() => {
-      i += 1;
-      setter(text.slice(0, i));
-      if (i >= text.length) {
-        if (typeTimerRef.current) clearInterval(typeTimerRef.current);
-        onDone?.();
-      }
-    }, TYPE_CHAR_MS);
-  }, []);
-
-  useEffect(() => {
-    if (!isOn || stage !== "greeting" || hasGreeted) return;
-    setGreetingPopKey((k) => k + 1);
-    typeText("Hi!", setGreetingText, () => {
+  // Advances when each greeting line finishes typing (TypedText calls back).
+  const onGreetLineDone = useCallback(() => {
+    if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
+    if (greetPhase === "hi") {
+      seqTimerRef.current = setTimeout(() => setGreetPhase("welcome"), HI_HOLD_MS);
+    } else {
       seqTimerRef.current = setTimeout(() => {
-        setGreetingPopKey((k) => k + 1);
-        typeText("Welcome nerd", setGreetingText, () => {
-          seqTimerRef.current = setTimeout(() => {
-            setGreetingText("");
-            setHasGreeted(true);
-          }, WELCOME_HOLD_MS);
-        });
-      }, HI_HOLD_MS);
-    });
-    return () => {
-      if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, hasGreeted, isOn]);
+        hasGreetedOnce.current = true;
+        setStage("live");
+      }, WELCOME_HOLD_MS);
+    }
+  }, [greetPhase]);
 
-  useEffect(() => {
-    if (!isOn || !hasGreeted || posters.length === 0) return;
-    const film = posters[posterIndex]?.film ?? "";
-    typeText(QUOTE_MAP[film] ?? "This one's a favorite of mine.", setBannerText);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOn, hasGreeted, posterIndex, posters]);
+  const changeChannel = useCallback(
+    (direction: 1 | -1) => {
+      if (!isLive || isGlitching || channels.length === 0) return;
+      playChannelStatic(GLITCH_MS);
+      setIsGlitching(true);
+      glitchTimerRef.current = setTimeout(() => {
+        setPictureReady(false);
+        setChannelIndex((i) => (i + direction + channels.length) % channels.length);
+        setIsGlitching(false);
+      }, GLITCH_MS);
+    },
+    [isLive, isGlitching, channels.length]
+  );
 
-  const changeChannel = useCallback((direction: 1 | -1) => {
-    if (!isOn || !hasGreeted || isGlitching || posters.length === 0) return;
-    playChannelDistortion();
-    setIsGlitching(true);
-    glitchTimerRef.current = setTimeout(() => {
-      setPosterIndex((i) => (i + direction + posters.length) % posters.length);
-      setIsGlitching(false);
-    }, GLITCH_MS);
-  }, [isOn, hasGreeted, isGlitching, posters.length]);
+  const goPrev = useCallback(() => changeChannel(-1), [changeChannel]);
+  const goNext = useCallback(() => changeChannel(1), [changeChannel]);
 
   const togglePower = useCallback(() => {
-    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-    if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
-    if (typeTimerRef.current) clearInterval(typeTimerRef.current);
-    if (glitchTimerRef.current) clearTimeout(glitchTimerRef.current);
-
-    setIsOn((wasOn) => {
-      playClick(!wasOn);
-      if (wasOn) {
-        setStage("neutral");
-        setHasGreeted(false);
-        setGreetingText("");
-        setBannerText("");
-        setPosterIndex(0);
+    clearAllTimers();
+    setStage((current) => {
+      const turningOn = current === "off";
+      playPower(turningOn);
+      if (!turningOn) {
+        setGreetPhase("hi");
         setIsGlitching(false);
-        return false;
+        setPictureReady(false);
+        return "off";
       }
-      setStage("neutral");
-      return true;
+      return "warmup";
+    });
+  }, [clearAllTimers]);
+
+  const toggleMute = useCallback(() => {
+    setMutedState((m) => {
+      // Unmuting should be audible; muting should not chirp on its way out.
+      if (m) {
+        setMuted(false);
+        playButtonPress(true);
+      }
+      return !m;
     });
   }, []);
 
+  // Keyboard control, so the hero is usable without hunting for the remote.
   useEffect(() => {
-    return () => {
-      if (typeTimerRef.current) clearInterval(typeTimerRef.current);
-      if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
-      if (glitchTimerRef.current) clearTimeout(glitchTimerRef.current);
-      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-    };
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (target?.isContentEditable) return;
+
+      if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+        e.preventDefault();
+        playButtonPress(true);
+        changeChannel(1);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+        e.preventDefault();
+        playButtonPress(true);
+        changeChannel(-1);
+      } else if (e.key === " " || e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        playButtonPress(true);
+        togglePower();
+      } else if (e.key.toLowerCase() === "m") {
+        toggleMute();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [changeChannel, togglePower, toggleMute]);
+
+  // The character sleeps while the set is off and dozes off when ignored.
+  // A cached image can finish decoding before React attaches onLoad, so that
+  // event never fires and the subtitle and channel bug stay hidden forever.
+  // Checking `complete` as the node mounts covers the cached case.
+  const handlePictureRef = useCallback((node: HTMLImageElement | null) => {
+    if (node && node.complete && node.naturalWidth > 0) setPictureReady(true);
   }, []);
 
-  const showScreen = isOn && stage === "greeting";
-  const currentPoster = posters[posterIndex];
+  const handleMood = useCallback((mood: RigMood) => {
+    setFaceState(mood === "asleep" ? "asleep" : "awake");
+  }, []);
+
+  useCharacterRig(stageRef, {
+    poweredOn: isOn,
+    enabled: rigEnabled,
+    onMoodChange: handleMood,
+  });
+
+  const current = channels[channelIndex];
+  const channelNumber = String(channelIndex + 1).padStart(2, "0");
 
   return (
-    <div
-      style={{
-        width: "100%",
-        minHeight: "80vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 20,
-        background: "#000",
-        padding: "24px",
-      }}
-    >
+    <div className="tv-hero">
       <style>{`
+        .tv-hero {
+          --brass: #c9a227;
+          --brass-lit: #e8ce7a;
+          --oxblood: #6b0016;
+          --oxblood-lit: #9b1b30;
+          --bone: #f4efe6;
+          --shell: #17151300;
+
+          width: 100%;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          gap: clamp(16px, 3vw, 48px);
+          padding: 24px;
+        }
+
         .pixelated-sprite { image-rendering: pixelated; }
 
-        /* Character is ALWAYS visible now, on or off — off just looks
-           powered-down (dim/desaturated), like a real TV, instead of
-           vanishing. Smooth, consistent transition either direction. */
-        .char-wrap {
-          transition: filter 500ms ease, opacity 500ms ease;
-          filter: grayscale(0) brightness(1);
+        .tv-stage { width: min(52vw, 520px); flex-shrink: 0; }
+        .tv-stage-inner { position: relative; width: 100%; padding-top: 100%; }
+
+        /* ---------- the layered character rig ---------- */
+
+        /* The character never disappears — powering off just dims and
+           desaturates it, the way a real set sits dark in the room. */
+        .rig { position: absolute; inset: 0; perspective: 900px; }
+        /* Dim the sprite art only. The face is not part of the sprite — it is
+           lit from inside the tube, so it stays bright while the set is dark. */
+        .rig img { transition: filter 600ms ease; filter: grayscale(0) brightness(1); }
+        .rig.is-off img { filter: grayscale(0.62) brightness(0.46); }
+
+        .rig-layer { position: absolute; inset: 0; }
+        .rig-layer img { position: absolute; }
+
+        /* Pivots at the base of the neck, so it tilts like a head on a spine
+           rather than sliding around like a sticker. The yaw/pitch are what
+           read as "looking at you"; the roll adds the bit of personality. */
+        .rig-head {
+          transform-origin: ${HEAD_PIVOT.x}% ${HEAD_PIVOT.y}%;
+          transform:
+            translate3d(calc(var(--hx, 0) * 1%), calc(var(--hy, 0) * 1%), 0)
+            rotateY(calc(var(--yaw, 0) * 1deg))
+            rotateX(calc(var(--pitch, 0) * 1deg))
+            rotate(calc(var(--roll, 0) * 1deg));
+          will-change: transform;
         }
-        .char-wrap.tv-off { filter: grayscale(0.75) brightness(0.42); }
+
+        /* The body lags well behind the head. That gap is what gives the
+           motion weight instead of making the whole sprite slide as one. */
+        .rig-body {
+          transform-origin: 50% 100%;
+          transform:
+            translate3d(calc(var(--bx, 0) * 1%), 0, 0)
+            rotate(calc(var(--roll, 0) * 0.3deg));
+          will-change: transform;
+        }
+
+        /* Dozing dims the tube and softens the glow; asleep goes further. */
+        .tv-stage-inner[data-mood="dozing"] .crt-screen { filter: brightness(0.6) saturate(0.8); }
+        .tv-stage-inner[data-mood="dozing"] .rig,
+        .tv-stage-inner[data-mood="asleep"] .rig { animation-duration: 5.6s; }
 
         @keyframes charBreathe {
           0%, 100% { transform: translateY(0) scale(1); }
@@ -298,30 +436,161 @@ export default function FilmStripHero() {
         }
         .char-breathe { animation: charBreathe 3.2s ease-in-out infinite; transform-origin: 50% 100%; }
 
-        .screen-text {
-          color: #f2d9a0;
-          font-family: monospace;
-          font-weight: 700;
-          font-size: clamp(0.9rem, 2.2vw, 1.4rem);
-          text-shadow: 0 0 10px rgba(212,175,97,0.85), 0 0 3px #000;
-          position: relative;
-          z-index: 1;
-        }
+        /* ---------- the tube ---------- */
 
-        /* Cinema-glow behind the greeting — a warm gold/maroon pulse
-           instead of flat black, so it feels like a theater screen. */
-        .greeting-glow {
+        .crt-screen {
+          position: absolute;
+          overflow: hidden;
+          background: #000;
+          -webkit-mask-image: url("${SCREEN_MASK}");
+          mask-image: url("${SCREEN_MASK}");
+          -webkit-mask-size: 100% 100%;
+          mask-size: 100% 100%;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+          container-type: size;
+          container-name: crt;
+        }
+        .crt-screen.is-live { cursor: pointer; }
+
+        /* Picture fills the tube: the source is a landscape backdrop and
+           object-fit: cover crops the overflow, so there are no black bars. */
+        .crt-picture {
           position: absolute; inset: 0;
-          background: radial-gradient(circle at 50% 50%, rgba(212,175,97,0.4), rgba(122,32,32,0.28) 55%, rgba(0,0,0,0.92) 100%);
-          animation: greetingGlowPulse 2.6s ease-in-out infinite;
+          width: 100%; height: 100%;
+          object-fit: cover;
+          /* A sharp modern still inside hand-painted pixel art reads as a
+             foreign object. Softening and desaturating it slightly pulls it
+             into the same world as the frame around it. */
+          filter: saturate(0.84) contrast(0.93) blur(0.35px);
+          animation: kenBurns 22s ease-in-out infinite alternate, pictureIn 520ms ease-out both;
         }
-        @keyframes greetingGlowPulse {
-          0%, 100% { filter: brightness(1) saturate(1); }
-          50% { filter: brightness(1.3) saturate(1.35); }
+        /* Parallax: the picture drifts against the head like a pupil in an
+           eye. Uses the translate property rather than transform so it
+           composes with the Ken Burns pan instead of overwriting it. */
+        .crt-picture { translate: calc(var(--ex, 0) * 1%) calc(var(--ey, 0) * 1%); }
+        .crt-glass-glare { translate: calc(var(--ex, 0) * -1.6%) 0; }
+
+        @keyframes kenBurns {
+          from { transform: scale(1.06) translate(0, 0); }
+          to   { transform: scale(1.16) translate(-2%, -1.5%); }
+        }
+        @keyframes pictureIn {
+          from { opacity: 0; filter: brightness(2.4) contrast(0.4); }
+          to   { opacity: 1; filter: none; }
         }
 
-        /* Bounces/tilts in once per line (keyed on line change), then
-           keeps a gentle wiggle while it's on screen. */
+        /* Warm-up: the horizontal line that blooms open into a picture. */
+        .crt-warmup { position: absolute; inset: 0; background: #000; overflow: hidden; }
+        .crt-warmup::after {
+          content: "";
+          position: absolute; left: 0; right: 0; top: 50%;
+          height: 2px; background: var(--bone);
+          box-shadow: 0 0 18px 6px rgba(244,239,230,0.8);
+          animation: tubeBloom ${WARMUP_MS}ms cubic-bezier(.2,.7,.3,1) forwards;
+        }
+        @keyframes tubeBloom {
+          0%   { transform: scaleX(0.02); opacity: 0; }
+          22%  { transform: scaleX(1); opacity: 1; height: 2px; }
+          60%  { height: 26%; opacity: 0.75; }
+          100% { height: 100%; top: 0; opacity: 0; }
+        }
+
+        /* No channels came back — show the colour bars rather than a void. */
+        .crt-nosignal {
+          position: absolute; inset: 0; z-index: 2;
+          display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 6cqh;
+          background: #05060a;
+        }
+        .crt-nosignal-bars {
+          width: 74cqw; height: 26cqh;
+          background: linear-gradient(90deg,
+            #c9c9c9 0 14.28%, #c9c14a 14.28% 28.56%, #4ac9c9 28.56% 42.84%,
+            #4ac94a 42.84% 57.12%, #c94ac9 57.12% 71.4%, #c94a4a 71.4% 85.68%,
+            #4a4ac9 85.68% 100%);
+          opacity: 0.55;
+        }
+        .crt-nosignal-text {
+          color: var(--bone);
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 6cqw;
+          font-weight: 700;
+          letter-spacing: 0.24em;
+          text-transform: uppercase;
+          text-shadow: 0 0 8px rgba(0,0,0,0.9);
+        }
+
+        /* ---------- subtitles ---------- */
+
+        /* Sized in container units so the line scales with the tube itself
+           rather than the viewport — the screen is only ~25% of the stage. */
+        .crt-subtitle-band {
+          position: absolute; left: 0; right: 0; bottom: 0;
+          padding: 0 6cqw 5cqh;
+          display: flex; justify-content: center;
+          background: linear-gradient(to top, rgba(0,0,0,0.82), rgba(0,0,0,0.45) 55%, transparent);
+          z-index: 2;
+        }
+        .crt-subtitle {
+          margin: 0;
+          color: var(--bone);
+          font-family: 'Helvetica Neue', Arial, sans-serif;
+          font-weight: 600;
+          font-size: 6.2cqw;
+          line-height: 1.25;
+          text-align: center;
+          text-shadow: 0 0.4cqw 0.8cqw rgba(0,0,0,0.95), 0 0 0.3cqw rgba(0,0,0,1);
+          text-wrap: balance;
+        }
+
+        /* Channel bug, top-left, exactly where a broadcaster would put it. */
+        .crt-osd {
+          position: absolute; top: 5cqh; left: 5cqw;
+          z-index: 2;
+          display: flex; align-items: baseline; gap: 1.6cqw;
+          padding: 1.4cqh 2.4cqw;
+          background: rgba(6,6,8,0.62);
+          border-left: 0.7cqw solid var(--brass);
+          opacity: 1;
+          pointer-events: none;
+          /* Shows itself and clears itself. Keyed on the channel, so tuning
+             restarts the flash without any timer or state to keep in sync. */
+          animation: osdFlash 2200ms ease-out forwards;
+        }
+        @keyframes osdFlash {
+          0%   { opacity: 0; transform: translateX(-8%); }
+          8%   { opacity: 1; transform: none; }
+          80%  { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        .crt-osd-num {
+          color: var(--brass-lit);
+          font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+          font-weight: 700; font-size: 5.4cqw; letter-spacing: 0.04em;
+        }
+        .crt-osd-name {
+          color: var(--bone);
+          font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+          font-weight: 500; font-size: 4cqw;
+          text-transform: uppercase; letter-spacing: 0.12em;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          max-width: 46cqw;
+        }
+
+        /* ---------- greeting ---------- */
+
+        /* Pitch black behind the greeting — the tube is unlit apart from the
+           text itself, so no coloured wash. */
+        .greeting-glow { position: absolute; inset: 0; background: #000; }
+        .screen-text {
+          position: relative; z-index: 1;
+          color: #f2d9a0;
+          font-family: ui-monospace, Menlo, monospace;
+          font-weight: 700;
+          font-size: 9cqw;
+          text-shadow: 0 0 10px rgba(212,175,97,0.85), 0 0 3px #000;
+        }
         .greeting-pop {
           display: inline-block;
           animation: greetingPopIn 550ms cubic-bezier(.34,1.56,.64,1) both,
@@ -337,211 +606,575 @@ export default function FilmStripHero() {
           50% { transform: rotate(-2.5deg); }
         }
 
+        /* ---------- glass ---------- */
+
         .crt-scanlines {
-          position: absolute; inset: 0; pointer-events: none;
+          position: absolute; inset: 0; pointer-events: none; z-index: 3;
           background: repeating-linear-gradient(
             to bottom, rgba(0,0,0,0.16) 0px, rgba(0,0,0,0.16) 1px, transparent 2px, transparent 3px
           );
           mix-blend-mode: multiply;
         }
-        .crt-vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 22% 4% rgba(0,0,0,0.65); }
-        .crt-glow { position: absolute; inset: -6%; pointer-events: none; box-shadow: 0 0 44px 14px rgba(120,200,160,0.2); }
-        .crt-glass-glare {
-          position: absolute; inset: 0; pointer-events: none;
-          background: linear-gradient(115deg, transparent 28%, rgba(255,255,255,0.13) 45%, rgba(255,255,255,0.04) 52%, transparent 68%);
+        /* Edge darkening as a gradient, not an inset box-shadow: a shadow
+           hugs the rectangular border box and would square off the corners
+           the mask just rounded. This falls off toward the real edge and
+           reads as the picture curving away on a convex tube. */
+        .crt-vignette {
+          position: absolute; inset: 0; pointer-events: none; z-index: 3;
+          background: radial-gradient(118% 118% at 50% 46%,
+            transparent 52%, rgba(0,0,0,0.22) 80%, rgba(0,0,0,0.5) 97%, rgba(0,0,0,0.62) 100%);
         }
+        /* Warm phosphor cast, multiplied over the picture so it shares the
+           frame's palette instead of glowing cold against it. */
+        .crt-warmth {
+          position: absolute; inset: 0; pointer-events: none; z-index: 2;
+          background: rgb(255, 216, 160);
+          mix-blend-mode: multiply;
+          opacity: 0.34;
+        }
+
+        /* Curved glass catches light along the top and shades at the base. */
+        .crt-bulge {
+          position: absolute; inset: 0; pointer-events: none; z-index: 4;
+          background:
+            radial-gradient(90% 46% at 50% -6%, rgba(255,255,255,0.14), transparent 62%),
+            radial-gradient(80% 40% at 50% 106%, rgba(0,0,0,0.34), transparent 58%);
+        }
+        .crt-glass-glare {
+          position: absolute; inset: 0; pointer-events: none; z-index: 4;
+          background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.10) 44%, rgba(255,255,255,0.03) 51%, transparent 66%);
+        }
+        /* Slow bright band drifting down the tube — the rolling refresh bar. */
+        .crt-rollbar {
+          position: absolute; left: 0; right: 0; height: 22%; pointer-events: none; z-index: 3;
+          background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.055), transparent);
+          animation: rollDown 7s linear infinite;
+        }
+        @keyframes rollDown { from { top: -25%; } to { top: 105%; } }
+
         .crt-static {
-          position: absolute; inset: 0;
+          position: absolute; inset: 0; z-index: 5;
           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
           background-size: 120px 120px;
-          opacity: 0.9;
+          opacity: 0.55;
+          mix-blend-mode: screen;
           animation: staticJitter 90ms steps(2) infinite, staticFlicker 90ms linear infinite;
         }
         @keyframes staticJitter { 0% { transform: translate(0,0); } 50% { transform: translate(-2%, 1%); } 100% { transform: translate(1%, -2%); } }
         @keyframes staticFlicker { 0%, 100% { filter: brightness(1) contrast(1.4); } 50% { filter: brightness(1.4) contrast(1.8); } }
 
-        /* Toggle-switch power control, red/black/white themed. */
-        .power-toggle {
-          position: relative;
-          width: 72px; height: 50px;
-          border-radius: 999px;
-          background: #0d0d0d;
-          border: 2px solid #6b1f1f;
-          cursor: pointer;
-          padding: 0;
+        /* Horizontal hold slipping while the tuner hunts for the next channel.
+           This rides on the signal wrapper inside the glass, never on the tube
+           itself: the screen is masked to the bezel and must stay welded to the
+           frame, so only the picture is allowed to tear and roll. */
+        .crt-signal { position: absolute; inset: 0; }
+        .crt-screen.is-glitching .crt-signal { animation: hSlip ${GLITCH_MS}ms steps(7) 1; }
+        @keyframes hSlip {
+          0%   { transform: translate3d(0, 0, 0) skewX(0deg); }
+          20%  { transform: translate3d(4%, -6%, 0) skewX(-2.4deg); }
+          45%  { transform: translate3d(-5%, 9%, 0) skewX(1.8deg); }
+          70%  { transform: translate3d(3%, -4%, 0) skewX(-1deg); }
+          88%  { transform: translate3d(-1.5%, 2%, 0) skewX(0.4deg); }
+          100% { transform: translate3d(0, 0, 0) skewX(0deg); }
         }
-        .power-side-label {
-          font-family: monospace; font-weight: 700; font-size: 0.7rem;
-          letter-spacing: 0.05em;
-          color: #fff;
-          opacity: 0.35;
-          text-shadow: 0 0 6px rgba(255,255,255,0.55);
-          transition: opacity 220ms ease;
-        }
-        .power-side-label.active { opacity: 1; }
-        .power-toggle .thumb {
-          position: absolute; top: 4px; left: 4px;
-          width: 38px; height: 38px;
-          border-radius: 50%;
-          background: radial-gradient(circle at 35% 30%, #fff, #cfcfcf 70%);
-          box-shadow: 0 0 6px rgba(0,0,0,0.6);
-          transition: transform 220ms ease, background 220ms ease, box-shadow 220ms ease;
-        }
-        .power-toggle.is-on .thumb {
-          transform: translateX(22px);
-          background: radial-gradient(circle at 35% 30%, #ff6b6b, #b91c1c 75%);
-          box-shadow: 0 0 12px 3px rgba(220,40,40,0.85);
-        }
-        .power-toggle:active .thumb { transform: scale(0.94) translateX(var(--tx, 0)); }
 
-        .channel-btn {
+        /* ---------- the face ---------- */
+
+        /* Switched off, the tube is a face rather than a dead screen. Drawn as
+           vectors so the expressions can be tweened instead of swapped. */
+        .face-box {
+          position: absolute;
           display: flex; align-items: center; justify-content: center;
-          width: 54px; height: 54px;
-          border-radius: 50%;
-          background: radial-gradient(circle at 35% 30%, #8a2530, #5c1018 75%);
-          border: 2px solid #f2f2f2;
-          color: #ffffff;
-          cursor: pointer;
-          box-shadow: 0 3px 0 #000, 0 0 8px rgba(255,255,255,0.2);
+          -webkit-mask-image: url("${SCREEN_MASK}");
+          mask-image: url("${SCREEN_MASK}");
+          -webkit-mask-size: 100% 100%;
+          mask-size: 100% 100%;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
         }
-        .channel-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #000; }
-        .channel-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .face {
+          width: 100%; height: 100%;
+          overflow: visible;
+          filter: drop-shadow(0 0 6px rgba(226,178,90,0.5));
+        }
 
-        .banner-quote {
-          color: #2a1a10;
-          font-family: monospace;
-          font-weight: 700;
-          font-size: clamp(0.55rem, 1.55vw, 0.95rem);
-          text-align: center;
-          line-height: 1.25;
-          max-width: 92%;
-          overflow-wrap: break-word;
-          word-break: break-word;
+        .eye-ball { fill: #f2d9a0; }
+        .eye-pupil {
+          fill: #140b04;
+          /* The pupils get their own spring in the rig and a much stiffer one,
+             so they arrive before the head does — which is how eyes work. */
+          transform: translate(calc(var(--px, 0) * 1px), calc(var(--py, 0) * 1px));
         }
-        .banner-attribution {
-          color: #7a2020;
-          font-family: monospace;
+        /* Lids drop from the top of the socket; scaleY is the whole animation. */
+        .eye-lid {
+          fill: #000;
+          transform-box: fill-box;
+          transform-origin: top;
+          transform: scaleY(0);
+          transition: transform 180ms ease;
+        }
+        .brow {
+          fill: #e2b25a;
+          transform-box: fill-box;
+          transform-origin: center;
+          transition: transform 320ms ease;
+        }
+        /* A catchlight does more for friendliness than any other single
+           detail — it turns a flat disc into a wet, living eye. */
+        .eye-shine { fill: #fffaf0; opacity: 0.9; }
+        /* Shut eyes are a lash line, not a filled shape. Covering the eye with
+           a dark rectangle showed up as a black box against the tube gradients
+           instead of reading as closed. */
+        .eye-closed {
+          fill: none;
+          stroke: #e2b25a;
+          stroke-width: 4;
+          stroke-linecap: round;
+          opacity: 0;
+          transition: opacity 160ms ease;
+        }
+
+        /* Resting mouth is an open, upturned smile rather than a neutral slot. */
+        .mouth {
+          fill: none;
+          stroke: #e2b25a;
+          stroke-width: 4.5;
+          stroke-linecap: round;
+          transform-box: fill-box;
+          transform-origin: center;
+          transition: transform 320ms cubic-bezier(.34,1.4,.64,1);
+        }
+
+        /* Awake: eyes open and bright, brows lifted into a friendly arch,
+           with the odd blink. */
+        .face[data-face="awake"] .eye-lid { animation: blink 5.4s ease-in-out infinite; }
+        .face[data-face="awake"] .brow-l { transform: translateY(-2px) rotate(-7deg); }
+        .face[data-face="awake"] .brow-r { transform: translateY(-2px) rotate(7deg); }
+        .face[data-face="awake"] .mouth { transform: scale(1.05); }
+        /* A slow excited bob, so the happy face is never completely still. */
+        .face[data-face="awake"] .brows { animation: browBob 3.4s ease-in-out infinite; }
+        @keyframes browBob {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(-1.6px); }
+        }
+        @keyframes blink {
+          0%, 92%, 100% { transform: scaleY(0); }
+          95%, 97%      { transform: scaleY(1); }
+        }
+
+        /* Asleep: lids shut, brows relaxed, mouth a small slack o. */
+        .face[data-face="asleep"] .eye-ball,
+        .face[data-face="asleep"] .eye-pupil,
+        .face[data-face="asleep"] .eye-shine { opacity: 0; }
+        .face[data-face="asleep"] .eye-closed { opacity: 1; }
+        .face[data-face="asleep"] .brow-l { transform: translateY(4px) rotate(7deg); }
+        .face[data-face="asleep"] .brow-r { transform: translateY(4px) rotate(-7deg); }
+        .face[data-face="asleep"] .mouth { transform: scale(0.55, 0.3); }
+
+        /* Sleep zeds, only while it is actually asleep. */
+        .z {
+          fill: #e2b25a;
+          font-family: ui-monospace, Menlo, monospace;
           font-weight: 700;
-          font-size: clamp(0.48rem, 1.15vw, 0.75rem);
+          font-size: 13px;
+          opacity: 0;
+        }
+        .face[data-face="asleep"] .z { animation: zFloat 3.2s ease-in-out infinite; }
+        .face[data-face="asleep"] .z2 { animation-delay: 0.5s; }
+        .face[data-face="asleep"] .z3 { animation-delay: 1s; }
+        @keyframes zFloat {
+          0%   { opacity: 0; transform: translateY(4px) scale(0.7); }
+          30%  { opacity: 0.95; }
+          100% { opacity: 0; transform: translateY(-12px) scale(1.15); }
+        }
+
+        /* ---------- the held sign ---------- */
+
+        .sign-area {
+          position: absolute;
+          display: flex; align-items: center; justify-content: center;
+          padding: 3%;
+          container-type: size;
+          container-name: sign;
           text-align: center;
+        }
+        .sign-title {
+          margin: 0;
+          color: #2a1a10;
+          font-family: 'Times New Roman', Georgia, serif;
+          font-weight: 700;
+          font-size: 15cqh;
+          line-height: 1.1;
+          letter-spacing: 0.01em;
+          text-wrap: balance;
+        }
+        .sign-year {
+          display: block;
+          margin-top: 0.35em;
+          color: #7a2020;
+          font-family: ui-monospace, Menlo, monospace;
+          font-weight: 700;
+          font-size: 9cqh;
+          letter-spacing: 0.34em;
+        }
+
+        /* ---------- the remote ---------- */
+
+        .remote {
+          display: flex; flex-direction: column; align-items: center;
+          gap: 14px;
+          padding: 20px 18px 22px;
+          border-radius: 30px;
+          background:
+            linear-gradient(168deg, #262220 0%, #131110 46%, #0a0908 100%);
+          border: 1px solid #3b342c;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.09),
+            inset 0 -14px 26px rgba(0,0,0,0.65),
+            0 22px 42px rgba(0,0,0,0.6);
+        }
+        .remote-brand {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 0.55rem; font-weight: 700;
+          letter-spacing: 0.34em; text-transform: uppercase;
+          color: #6d6257;
+          margin-bottom: 2px;
+        }
+        /* Standby LED: dark when off, a live red glow when the set is on. */
+        .remote-led {
+          width: 8px; height: 8px; border-radius: 50%;
+          background: #3a1512;
+          transition: background 260ms ease, box-shadow 260ms ease;
+        }
+        .remote-led.is-on {
+          background: #ff4d4d;
+          box-shadow: 0 0 10px 2px rgba(255,60,60,0.75);
+        }
+
+        .rbtn {
+          display: flex; align-items: center; justify-content: center;
+          border-radius: 50%;
+          cursor: pointer;
+          color: var(--bone);
+          transition: transform 90ms ease, box-shadow 90ms ease, filter 200ms ease;
+        }
+        .rbtn:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+        .rbtn[data-pressed="true"] { transform: translateY(3px); }
+        .rbtn:disabled { cursor: not-allowed; filter: grayscale(0.7) brightness(0.55); }
+
+        /* Power: the one key that is always live, so it gets the accent. */
+        .rbtn-power {
+          width: 60px; height: 60px;
+          background: radial-gradient(circle at 34% 28%, #4a1119, #2a0a0e 72%);
+          border: 2px solid #5d4a34;
+          box-shadow: 0 4px 0 #000, inset 0 1px 2px rgba(255,255,255,0.18);
+        }
+        .rbtn-power.is-on {
+          background: radial-gradient(circle at 34% 28%, var(--oxblood-lit), var(--oxblood) 74%);
+          border-color: var(--brass);
+          box-shadow: 0 4px 0 #000, 0 0 20px 3px rgba(155,27,48,0.55), inset 0 1px 2px rgba(255,255,255,0.25);
+        }
+        .rbtn-power[data-pressed="true"] { box-shadow: 0 1px 0 #000, inset 0 2px 6px rgba(0,0,0,0.7); }
+
+        /* Channel keys: the primary action, so they are the biggest keys. */
+        .rbtn-ch {
+          width: 66px; height: 66px;
+          background: radial-gradient(circle at 34% 26%, #34302b, #1a1715 76%);
+          border: 2px solid var(--brass);
+          box-shadow: 0 4px 0 #000, inset 0 1px 2px rgba(255,255,255,0.16);
+        }
+        .rbtn-ch:not(:disabled):hover { box-shadow: 0 4px 0 #000, 0 0 16px 2px rgba(201,162,39,0.4), inset 0 1px 2px rgba(255,255,255,0.2); }
+        .rbtn-ch[data-pressed="true"] { box-shadow: 0 1px 0 #000, inset 0 2px 6px rgba(0,0,0,0.7); }
+
+        .rbtn-mute {
+          width: 44px; height: 44px;
+          background: radial-gradient(circle at 34% 26%, #2a2724, #131110 78%);
+          border: 2px solid #4d453a;
+          box-shadow: 0 3px 0 #000;
+          color: #9c9186;
+        }
+        .rbtn-mute.is-muted { color: var(--oxblood-lit); border-color: var(--oxblood); }
+        .rbtn-mute[data-pressed="true"] { box-shadow: 0 1px 0 #000; }
+
+        .remote-label {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 0.58rem; font-weight: 700;
+          letter-spacing: 0.24em; text-transform: uppercase;
+          color: #8a7c6b;
+        }
+        .remote-divider { width: 46px; height: 1px; background: #352e26; }
+        .remote-hint {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 0.5rem; letter-spacing: 0.1em;
+          color: #5c534a; text-align: center; line-height: 1.6;
+        }
+
+        @media (max-width: 1024px) {
+          .tv-hero { flex-direction: column; }
+          .tv-stage { width: min(76vw, 440px); }
+          .remote {
+            flex-direction: row; flex-wrap: wrap; justify-content: center;
+            max-width: 100%;
+            gap: 18px; border-radius: 40px; padding: 16px 22px;
+          }
+          .remote-brand, .remote-divider, .remote-hint { display: none; }
+        }
+
+        /* Phones: the keys have to shrink or the remote is wider than the
+           screen and drags the whole page into horizontal scroll. */
+        @media (max-width: 560px) {
+          .tv-hero { gap: 14px; padding: 16px 12px; }
+          .remote { gap: 10px; padding: 12px 14px; }
+          .remote-label { display: none; }
+          .rbtn-power { width: 48px; height: 48px; }
+          .rbtn-ch { width: 52px; height: 52px; }
+          .rbtn-mute { width: 38px; height: 38px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .char-breathe, .crt-picture, .crt-rollbar, .greeting-pop, .eye-lid, .z, .brows, .crt-signal { animation: none !important; }
+          .crt-picture { transform: scale(1.06); }
         }
       `}</style>
 
-      <div style={{ alignSelf: "center", display: "flex", flexDirection: "row", gap: 10 }}>
-        <button
-          className="channel-btn"
-          onClick={() => changeChannel(-1)}
-          disabled={!isOn || !hasGreeted || isGlitching}
-          aria-label="Previous channel"
-        >
-          <svg viewBox="0 0 24 24" width="26" height="26">
-            <path d="M18 4 L8 12 L18 20 Z" fill="currentColor" />
-            <path d="M10 4 L0 12 L10 20 Z" fill="currentColor" />
-          </svg>
-        </button>
-        <button
-          className="channel-btn"
-          onClick={() => changeChannel(1)}
-          disabled={!isOn || !hasGreeted || isGlitching}
-          aria-label="Next channel"
-        >
-          <svg viewBox="0 0 24 24" width="26" height="26" style={{ transform: "scaleX(-1)" }}>
-            <path d="M18 4 L8 12 L18 20 Z" fill="currentColor" />
-            <path d="M10 4 L0 12 L10 20 Z" fill="currentColor" />
-          </svg>
-        </button>
-      </div>
+      <div className="tv-stage">
+        <div className="tv-stage-inner" ref={stageRef}>
+          <div className={`rig char-breathe${isOn ? "" : " is-off"}`}>
+            <div className="rig-layer rig-head">
+              <img src={RIG_SRC.head} alt="" className="pixelated-sprite" style={layerBox(RIG.head)} />
 
-      <div style={{ width: "min(70vw, 560px)", flexShrink: 0 }}>
-        <div style={{ position: "relative", width: "100%", paddingTop: "100%" }}>
-          <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-            {/* Character is always rendered — off just dims/desaturates it,
-                matching a real powered-down TV instead of disappearing. */}
-            <div className={`char-wrap char-breathe${isOn ? "" : " tv-off"}`} style={{ position: "absolute", inset: 0 }}>
-              <img
-                src={CHARACTER_SRC}
-                alt=""
-                className="pixelated-sprite"
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
-              />
-
-              {showScreen && (
+              {/* With the set off the tube is not a blank screen, it is the
+                  character's face. Eyes lead the head, close when it sleeps,
+                  and it yawns its way back awake. */}
+              {!isOn && (
                 <div
+                  className="face-box"
                   style={{
-                    position: "absolute",
                     left: `${SCREEN_BOX_PCT.x}%`,
                     top: `${SCREEN_BOX_PCT.y}%`,
                     width: `${SCREEN_BOX_PCT.w}%`,
                     height: `${SCREEN_BOX_PCT.h}%`,
-                    background: "#000",
-                    overflow: "hidden",
-                    borderRadius: "10%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
                   }}
                 >
-                  {!hasGreeted && (
-                    <>
-                      <div className="greeting-glow" />
-                      <span key={greetingPopKey} className="screen-text greeting-pop">{greetingText}</span>
-                    </>
-                  )}
-                  {hasGreeted && currentPoster?.posterUrl && (
-                    <img
-                      key={posterIndex}
-                      src={currentPoster.posterUrl}
-                      alt={currentPoster.film}
-                      className="pixelated-sprite"
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }}
-                    />
-                  )}
-                  <div className="crt-scanlines" />
-                  <div className="crt-vignette" />
-                  <div className="crt-glow" />
-                  <div className="crt-glass-glare" />
-                  {isGlitching && <div className="crt-static" />}
+                  <svg
+                    className="face"
+                    data-face={faceState}
+                    viewBox="0 0 146 100"
+                    preserveAspectRatio="xMidYMid meet"
+                    aria-hidden="true"
+                  >
+                    <g className="brows">
+                      <rect className="brow brow-l" x="28" y="16" width="34" height="5.5" rx="2.75" />
+                      <rect className="brow brow-r" x="84" y="16" width="34" height="5.5" rx="2.75" />
+                    </g>
+
+                    <g className="eye eye-l" transform="translate(46 46)">
+                      <ellipse className="eye-ball" rx="17" ry="15" />
+                      <circle className="eye-pupil" r="6.4" />
+                      <circle className="eye-shine" cx="6" cy="-6" r="3.1" />
+                      <path className="eye-closed" d="M-13 0 Q0 7 13 0" />
+                      <rect className="eye-lid" x="-18" y="-16" width="36" height="32" />
+                    </g>
+                    <g className="eye eye-r" transform="translate(100 46)">
+                      <ellipse className="eye-ball" rx="17" ry="15" />
+                      <circle className="eye-pupil" r="6.4" />
+                      <circle className="eye-shine" cx="6" cy="-6" r="3.1" />
+                      <path className="eye-closed" d="M-13 0 Q0 7 13 0" />
+                      <rect className="eye-lid" x="-18" y="-16" width="36" height="32" />
+                    </g>
+
+                    <path className="mouth" d="M57 74 Q73 91 89 74" />
+
+                    <g className="zzz">
+                      <text className="z z1" x="118" y="26">z</text>
+                      <text className="z z2" x="126" y="18">z</text>
+                      <text className="z z3" x="133" y="11">z</text>
+                    </g>
+                  </svg>
                 </div>
               )}
 
-              {isOn && hasGreeted && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${BANNER_BOX_PCT.x}%`,
-                    top: `${BANNER_BOX_PCT.y}%`,
-                    width: `${BANNER_BOX_PCT.w}%`,
-                    height: `${BANNER_BOX_PCT.h}%`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "3%",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.35em", maxWidth: "100%" }}>
-                    <span className="banner-quote">{bannerText}</span>
-                    {currentPoster?.film && bannerText.length > 0 && (
-                      <span className="banner-attribution">– {currentPoster.film}</span>
-                    )}
+            {isOn && (
+              <div
+                className={`crt-screen${isGlitching ? " is-glitching" : ""}${
+                  isLive && current ? " is-live" : ""
+                }`}
+                style={{
+                  left: `${SCREEN_BOX_PCT.x}%`,
+                  top: `${SCREEN_BOX_PCT.y}%`,
+                  width: `${SCREEN_BOX_PCT.w}%`,
+                  height: `${SCREEN_BOX_PCT.h}%`,
+                }}
+                onClick={() => {
+                  if (isLive && current && onSelectFilm) onSelectFilm(current.tmdbId);
+                }}
+                role={isLive && current ? "button" : undefined}
+                aria-label={isLive && current ? `Open ${current.film}` : undefined}
+              >
+                {stage === "warmup" && <div className="crt-warmup" />}
+
+                {stage === "greeting" && (
+                  <>
+                    <div className="greeting-glow" />
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span key={greetPhase} className="screen-text greeting-pop">
+                        <TypedText
+                          text={greetPhase === "hi" ? "Hi!" : "Welcome nerd"}
+                          onDone={onGreetLineDone}
+                        />
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {/* Upstream can fail transiently. A dark tube with no
+                    explanation reads as broken; a real set says NO SIGNAL. */}
+                {isLive && !current && channelsLoaded && (
+                  <div className="crt-nosignal">
+                    <span className="crt-nosignal-bars" />
+                    <span className="crt-nosignal-text">No signal</span>
                   </div>
-                </div>
-              )}
+                )}
+
+                {isLive && current && (
+                  <>
+                    <div className="crt-signal">
+                      <img
+                        key={current.tmdbId}
+                        src={current.imageUrl}
+                        alt={current.film}
+                        className="crt-picture"
+                        ref={handlePictureRef}
+                        onLoad={() => setPictureReady(true)}
+                      />
+                    </div>
+
+                    {pictureReady && (
+                      <div className="crt-osd" key={channelIndex}>
+                        <span className="crt-osd-num">CH {channelNumber}</span>
+                        <span className="crt-osd-name">{current.film}</span>
+                      </div>
+                    )}
+
+                    {pictureReady && !isGlitching && (
+                      <div className="crt-subtitle-band">
+                        <p className="crt-subtitle">
+                          <TypedText key={current.tmdbId} text={current.quote} />
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="crt-rollbar" />
+                <div className="crt-scanlines" />
+                <div className="crt-warmth" />
+                <div className="crt-vignette" />
+                <div className="crt-bulge" />
+                <div className="crt-glass-glare" />
+                {isGlitching && <div className="crt-static" />}
+              </div>
+            )}
+            </div>
+
+            <div className="rig-layer rig-body">
+              <img
+                src={RIG_SRC.bodySign}
+                alt=""
+                className="pixelated-sprite"
+                style={layerBox(RIG.bodySign)}
+              />
+
+            {/* The sign now carries the identity of what is on screen; the
+                quote itself moved into the tube as subtitles. */}
+            {isLive && current && (
+              <div
+                className="sign-area"
+                style={{
+                  left: `${BANNER_BOX_PCT.x}%`,
+                  top: `${BANNER_BOX_PCT.y}%`,
+                  width: `${BANNER_BOX_PCT.w}%`,
+                  height: `${BANNER_BOX_PCT.h}%`,
+                }}
+              >
+                <p className="sign-title">
+                  {current.film}
+                  {current.year && <span className="sign-year">{current.year}</span>}
+                </p>
+              </div>
+            )}
             </div>
           </div>
         </div>
       </div>
 
-      <div style={{ alignSelf: "center", display: "flex", alignItems: "center", gap: 10 }}>
-        <span className={`power-side-label${!isOn ? " active" : ""}`}>OFF</span>
-        <button
-          className={`power-toggle${isOn ? " is-on" : ""}`}
-          onClick={togglePower}
-          aria-label={isOn ? "Turn TV off" : "Turn TV on"}
+      <div className="remote">
+        <span className="remote-brand">Kinema</span>
+        <span className={`remote-led${isOn ? " is-on" : ""}`} />
+
+        <RemoteButton
+          className={`rbtn rbtn-power${isOn ? " is-on" : ""}`}
+          label={isOn ? "Turn TV off" : "Turn TV on"}
+          ariaPressed={isOn}
+          onPress={togglePower}
         >
-          <span className="thumb" />
-        </button>
-        <span className={`power-side-label${isOn ? " active" : ""}`}>ON</span>
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+            <path d="M12 3.5v8" />
+            <path d="M6.4 6.6a8 8 0 1 0 11.2 0" />
+          </svg>
+        </RemoteButton>
+
+        <span className="remote-label">Power</span>
+        <span className="remote-divider" />
+
+        <RemoteButton
+          className="rbtn rbtn-ch"
+          label="Previous channel"
+          disabled={!isLive || isGlitching}
+          onPress={goPrev}
+        >
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
+            <path d="M20 4 L10 12 L20 20 Z" />
+            <path d="M11 4 L1 12 L11 20 Z" />
+          </svg>
+        </RemoteButton>
+
+        <span className="remote-label">CH</span>
+
+        <RemoteButton
+          className="rbtn rbtn-ch"
+          label="Next channel"
+          disabled={!isLive || isGlitching}
+          onPress={goNext}
+        >
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" style={{ transform: "scaleX(-1)" }}>
+            <path d="M20 4 L10 12 L20 20 Z" />
+            <path d="M11 4 L1 12 L11 20 Z" />
+          </svg>
+        </RemoteButton>
+
+        <span className="remote-divider" />
+
+        <RemoteButton
+          className={`rbtn rbtn-mute${muted ? " is-muted" : ""}`}
+          label={muted ? "Unmute" : "Mute"}
+          ariaPressed={muted}
+          onPress={toggleMute}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 9v6h4l5 4V5L8 9H4z" />
+            {muted ? (
+              <>
+                <path d="M17 9.5l4 5" />
+                <path d="M21 9.5l-4 5" />
+              </>
+            ) : (
+              <path d="M17 8.5a5 5 0 0 1 0 7" />
+            )}
+          </svg>
+        </RemoteButton>
+
+        <span className="remote-hint">← → channel<br />space power · m mute</span>
       </div>
     </div>
   );

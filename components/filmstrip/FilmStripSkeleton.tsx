@@ -32,7 +32,7 @@ export default function FilmStripHero() {
             const posterPath = data.movie?.poster_path || null;
             return {
               posterUrl: posterPath
-                ? `/api/proxy-image?url=${encodeURIComponent(`https://image.tmdb.org/t/p/w500${posterPath}`)}`
+                ? `/api/proxy-image?url=${encodeURIComponent(`https://image.tmdb.org/t/p/w780${posterPath}`)}`
                 : null,
               film: f.film,
               line: f.line,

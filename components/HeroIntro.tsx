@@ -7,6 +7,8 @@ export default function HeroIntro() {
   return (
     <div style={{ textAlign: "center", padding: "60px 24px 20px" }}>
       <h1 style={{ fontSize: "2.2rem", fontFamily: "'Times New Roman', serif", marginBottom: 16 }}>
+        {/* The trailing space keeps the accessible name as
+            "Welcome to Kinema" rather than one run-together word. */}
         {words.map((word, i) => (
           <span
             key={i}
@@ -19,6 +21,7 @@ export default function HeroIntro() {
             }}
           >
             {word === "Kinema" ? <span style={{ color: "#6b0016" }}>{word}</span> : word}
+            {i < words.length - 1 ? " " : ""}
           </span>
         ))}
       </h1>

@@ -51,7 +51,6 @@ export default function DashboardPage() {
   }, [router]);
 
   const fetchYear2026 = useCallback((pageToFetch: number) => {
-    setLoading2026(true);
     fetch(`/api/movies?type=year&year=2026&page=${pageToFetch}`)
       .then((res) => res.json())
       .then((data) => {
@@ -62,7 +61,6 @@ export default function DashboardPage() {
   }, []);
 
   const fetchYear2025 = useCallback((pageToFetch: number) => {
-    setLoading2025(true);
     fetch(`/api/movies?type=year&year=2025&page=${pageToFetch}`)
       .then((res) => res.json())
       .then((data) => {
@@ -79,10 +77,7 @@ export default function DashboardPage() {
   }, [checkingAuth, fetchYear2026, fetchYear2025]);
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSuggestions([]);
-      return;
-    }
+    if (!searchQuery.trim()) return;
     const timeout = setTimeout(() => {
       fetch(`/api/movies?type=search&query=${encodeURIComponent(searchQuery)}`)
         .then((res) => res.json())
@@ -98,6 +93,7 @@ export default function DashboardPage() {
       if (entries[0].isIntersecting && !loading2026 && page2026 < totalPages2026 && !searchResults) {
         const next = page2026 + 1;
         setPage2026(next);
+        setLoading2026(true);
         fetchYear2026(next);
       }
     });
@@ -112,6 +108,7 @@ export default function DashboardPage() {
       if (entries[0].isIntersecting && !loading2025 && page2025 < totalPages2025 && !searchResults) {
         const next = page2025 + 1;
         setPage2025(next);
+        setLoading2025(true);
         fetchYear2025(next);
       }
     });
@@ -173,7 +170,7 @@ export default function DashboardPage() {
             </button>
           </form>
 
-          {showSuggestions && suggestions.length > 0 && (
+          {showSuggestions && searchQuery.trim() !== "" && suggestions.length > 0 && (
             <div style={{
               position: "absolute", top: "100%", left: 0, marginTop: 6, width: 260,
               background: "#111", border: "1px solid #333", borderRadius: 8,
@@ -191,7 +188,7 @@ export default function DashboardPage() {
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w92${movie.poster_path}`} alt={movie.title}
+                    <img src={`https://image.tmdb.org/t/p/w185${movie.poster_path}`} alt={movie.title}
                       style={{ width: 32, height: 48, objectFit: "cover", borderRadius: 4 }} />
                   ) : (
                     <div style={{ width: 32, height: 48, background: "#181818", borderRadius: 4 }} />
@@ -217,13 +214,13 @@ export default function DashboardPage() {
       <main style={{ padding: "40px 40px 80px" }}>
         {searchResults ? (
           <>
-            <h2 style={{ fontSize: "1.4rem", marginBottom: 4 }}>Results for "{searchQuery}"</h2>
+            <h2 style={{ fontSize: "1.4rem", marginBottom: 4 }}>Results for &quot;{searchQuery}&quot;</h2>
             <p style={{ color: "#888", fontSize: "0.9rem", marginBottom: 28 }}>{searchResults.length} films found</p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 24 }}>
               {searchResults.map((movie) => (
                 <div key={movie.id} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
                   {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`} alt={movie.title}
+                    <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
                       style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }} />
                   ) : (
                     <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />
@@ -242,7 +239,7 @@ export default function DashboardPage() {
               {movies2026.map((movie, i) => (
                 <div key={`${movie.id}-${i}`} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
                   {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`} alt={movie.title}
+                    <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
                       style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }} />
                   ) : (
                     <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />
@@ -260,7 +257,7 @@ export default function DashboardPage() {
               {movies2025.map((movie, i) => (
                 <div key={`${movie.id}-${i}`} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
                   {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`} alt={movie.title}
+                    <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
                       style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }} />
                   ) : (
                     <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />

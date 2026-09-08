@@ -1,8 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../lib/supabase";
-import HeroIntro from "../components/HeroIntro";
 import dynamic from "next/dynamic";
 
 const FilmStripHero = dynamic(() => import("../components/FilmStripHero"), {
@@ -18,22 +17,21 @@ type Movie = {
 };
 
 function useTypewriter(text: string, speed = 38, startDelay = 600) {
-  const [displayed, setDisplayed] = useState("");
-  const [done, setDone] = useState(false);
+  // Keeping the source text in state lets a change of line reset the reveal
+  // during render instead of through a setState inside the effect.
+  const [state, setState] = useState({ text, displayed: "", done: false });
+  const displayed = state.text === text ? state.displayed : "";
+  const done = state.text === text ? state.done : false;
 
   useEffect(() => {
-    setDisplayed("");
-    setDone(false);
     let i = 0;
     let intervalId: ReturnType<typeof setInterval> | undefined;
     const startId = setTimeout(() => {
       intervalId = setInterval(() => {
         i++;
-        setDisplayed(text.slice(0, i));
-        if (i >= text.length) {
-          if (intervalId) clearInterval(intervalId);
-          setDone(true);
-        }
+        const isDone = i >= text.length;
+        setState({ text, displayed: text.slice(0, i), done: isDone });
+        if (isDone && intervalId) clearInterval(intervalId);
       }, speed);
     }, startDelay);
     return () => {
@@ -50,7 +48,6 @@ export default function HomePage() {
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [pillsVisible, setPillsVisible] = useState(false);
 
   const typewriter = useTypewriter(
     "Glad you stopped in. Every great story starts with a single frame."
@@ -63,15 +60,29 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => setPillsVisible(true), 400);
-    return () => clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
     fetch("/api/movies?type=top_rated")
       .then((res) => res.json())
       .then((data) => setMovies(data.movies || []));
   }, []);
+
+  // Same contract as MovieModal: Escape dismisses, focus moves into the
+  // dialog and returns to whatever opened it.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const isModalOpen = !!selectedMovie || modalLoading;
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setSelectedMovie(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [isModalOpen]);
 
   function openMovie(id: number) {
     setModalLoading(true);
@@ -82,168 +93,297 @@ export default function HomePage() {
       .finally(() => setModalLoading(false));
   }
 
-  const pillLinkStyle: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#fff",
-    color: "#000",
-    border: "1px solid rgba(0,0,0,0.1)",
-    borderRadius: 999,
-    padding: "10px 22px",
-    fontSize: "0.95rem",
-    fontWeight: 600,
-    textDecoration: "none",
-    whiteSpace: "nowrap",
-    transition: "background-color 200ms ease, color 200ms ease",
-  };
-
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#000", color: "#fff", fontFamily: "'Montserrat', Arial, sans-serif" }}>
+    <div className="landing">
+      <div className="grain" aria-hidden="true" />
+
       <style>{`
-        .pill-link:hover {
-          background: #6b0016 !important;
-          color: #fff !important;
+        .landing { position: relative; min-height: 100vh; background: var(--ink); }
+        .landing > *:not(.grain) { position: relative; z-index: 2; }
+
+        /* --- header: was a fixed 48px-padded flex row that collapsed into
+               itself on phones, with the auth button landing on the logo. --- */
+        .site-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--space-4);
+          flex-wrap: wrap;
+          padding: var(--space-4) clamp(var(--space-4), 4vw, var(--space-7));
+          border-bottom: 1px solid var(--hairline);
+          background: linear-gradient(180deg, rgba(12,10,15,0.92), rgba(7,6,10,0.72));
+          backdrop-filter: blur(8px);
+          position: sticky;
+          top: 0;
+          z-index: 30;
         }
-        @keyframes typeCursorBlink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
+        .brand {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--space-3);
+          text-decoration: none;
+          color: var(--bone);
+        }
+        .brand img { width: 40px; height: 40px; }
+        .brand-name {
+          font-family: var(--font-display);
+          font-size: var(--text-lg);
+          font-weight: 900;
+          letter-spacing: 0.02em;
+        }
+        .brand-name em {
+          font-style: normal;
+          color: var(--oxblood-lit);
+        }
+
+        /* --- hero --- */
+        .hero {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+          padding: clamp(var(--space-6), 6vw, var(--space-8)) var(--space-4) var(--space-5);
+        }
+        .hero-title {
+          margin: var(--space-4) 0 var(--space-3);
+          font-family: var(--font-display);
+          font-size: var(--text-3xl);
+          font-weight: 900;
+          line-height: 0.95;
+          letter-spacing: -0.02em;
+        }
+        .hero-title em {
+          font-style: normal;
+          color: var(--oxblood-lit);
+          text-shadow: 0 0 40px rgba(155, 27, 48, 0.45);
+        }
+        .hero-sub {
+          margin: 0 auto;
+          max-width: 46ch;
+          color: var(--muted);
+          font-size: var(--text-lg);
+        }
+
+        /* The character's line, typed out like it is speaking to you. */
+        .hero-speech {
+          display: block;
+          min-height: 3.2em;
+          margin: var(--space-6) auto var(--space-2);
+          max-width: 40ch;
+          color: var(--brass-lit);
+          font-family: var(--font-mono);
+          font-size: var(--text-sm);
+          letter-spacing: 0.04em;
         }
         .type-cursor {
           display: inline-block;
-          width: 2px;
-          height: 1.1em;
-          background: #fff;
-          vertical-align: middle;
-          margin-left: 2px;
-          animation: typeCursorBlink 1s step-end infinite;
+          width: 8px;
+          height: 1.05em;
+          margin-left: 3px;
+          background: var(--brass);
+          vertical-align: text-bottom;
+          animation: caret 1s step-end infinite;
+        }
+        @keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* --- now showing --- */
+        .showing {
+          padding: var(--space-7) clamp(var(--space-4), 4vw, var(--space-7)) var(--space-9);
+          max-width: 1400px;
+          margin: 0 auto;
+        }
+
+        .site-footer {
+          border-top: 1px solid var(--hairline);
+          padding: var(--space-6) clamp(var(--space-4), 4vw, var(--space-7));
+          display: flex;
+          flex-wrap: wrap;
+          gap: var(--space-4);
+          align-items: center;
+          justify-content: space-between;
+          color: var(--faint);
+          font-size: var(--text-xs);
+          font-family: var(--font-mono);
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+        }
+
+        /* --- modal --- */
+        .scrim {
+          position: fixed; inset: 0; z-index: 50;
+          display: flex; align-items: center; justify-content: center;
+          padding: var(--space-5);
+          background: rgba(4, 3, 6, 0.82);
+          backdrop-filter: blur(6px);
+          animation: scrimIn var(--dur) var(--ease-out) both;
+        }
+        @keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+        .sheet {
+          display: flex;
+          gap: var(--space-5);
+          width: 100%;
+          max-width: 660px;
+          max-height: 88vh;
+          overflow-y: auto;
+          padding: var(--space-6);
+          background: var(--panel);
+          border: 1px solid var(--hairline);
+          border-radius: var(--radius-lg);
+          box-shadow: var(--shadow-3);
+          outline: none;
+          animation: sheetIn var(--dur) var(--ease-pop) both;
+        }
+        @keyframes sheetIn {
+          from { opacity: 0; transform: translateY(16px) scale(0.97); }
+          to { opacity: 1; transform: none; }
+        }
+        .sheet img {
+          width: 170px; height: 255px;
+          object-fit: cover; flex-shrink: 0;
+          border-radius: var(--radius-sm);
+          box-shadow: var(--shadow-2);
+        }
+        .sheet h2 {
+          margin: 0 0 var(--space-1);
+          font-family: var(--font-display);
+          font-size: var(--text-xl);
+          font-weight: 900;
+        }
+        @media (max-width: 560px) {
+          .sheet { flex-direction: column; padding: var(--space-5); }
+          .sheet img { width: 120px; height: 180px; }
         }
       `}</style>
 
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px 48px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <img src="/logo.png" alt="Kinema" style={{ width: 44, height: 44 }} />
-          <span style={{ fontSize: "1.6rem", fontFamily: "'Times New Roman', serif", fontWeight: 900 }}>
-            Kinema
+      <header className="site-header">
+        <Link href="/" className="brand">
+          <img src="/logo.png" alt="" />
+          <span className="brand-name">
+            Kine<em>ma</em>
           </span>
-        </div>
-        <Link
-          href={isLoggedIn ? "/dashboard" : "/login"}
-          style={{ background: "#6b0016", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 28px", fontSize: "0.95rem", fontWeight: 600, textDecoration: "none" }}
-        >
+        </Link>
+        <Link href={isLoggedIn ? "/dashboard" : "/login"} className="btn btn-primary">
           {isLoggedIn ? "Go to Dashboard" : "Login / Sign Up"}
         </Link>
       </header>
 
-      <section
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          textAlign: "center",
-          padding: "60px 24px 20px",
-        }}
-      >
-        <div style={{ maxWidth: 620, minHeight: 54, marginBottom: 8 }}>
-          <p style={{ color: "#fff", fontSize: "clamp(18px, 4vw, 26px)", lineHeight: 1.35, margin: 0 }}>
+      <main>
+        <section className="hero">
+          <span className="stamp">Now showing</span>
+
+          <h1 className="hero-title">
+            Welcome to <em>Kinema</em>
+          </h1>
+          <p className="hero-sub">
+            A living reel of the films that shaped us — quietly turning, one frame at a time.
+          </p>
+
+          <p className="hero-speech">
             {typewriter.displayed}
             {!typewriter.done && <span className="type-cursor" />}
           </p>
-        </div>
 
-        <FilmStripHero />
+          <div className="bulbs" aria-hidden="true">
+            {Array.from({ length: 11 }).map((_, i) => (
+              <span key={i} className="bulb" />
+            ))}
+          </div>
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            justifyContent: "center",
-            gap: 12,
-            marginTop: 32,
-            opacity: pillsVisible ? 1 : 0,
-            transform: pillsVisible ? "translateY(0)" : "translateY(8px)",
-            transition: "opacity 0.4s ease, transform 0.4s ease",
-          }}
-        >
-          <Link href={isLoggedIn ? "/dashboard" : "/login"} className="pill-link" style={pillLinkStyle}>
-            Browse the catalog
-          </Link>
-          <Link href="/genres" className="pill-link" style={pillLinkStyle}>
-            Explore genres
-          </Link>
-          <Link href="/watchlist" className="pill-link" style={pillLinkStyle}>
-            Your watchlist
-          </Link>
-          <Link href="/reviews" className="pill-link" style={pillLinkStyle}>
-            Read reviews
-          </Link>
-        </div>
-      </section>
+          <FilmStripHero onSelectFilm={openMovie} />
+        </section>
 
-      <section style={{ padding: "20px 0 80px", overflow: "hidden" }}>
-        <div style={{ display: "flex", gap: 20, overflowX: "auto", padding: "0 48px", scrollbarWidth: "none" }}>
-          {movies.map((movie) => (
-            <div
-              key={movie.id}
-              onClick={() => openMovie(movie.id)}
-              style={{ flexShrink: 0, width: 180, cursor: "pointer" }}
-            >
-              {movie.poster_path ? (
-                <img
-                  src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
-                  alt={movie.title}
-                  style={{ width: "100%", height: 270, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 32px 0 #1a1a1a" }}
-                />
-              ) : (
-                <div style={{ width: "100%", height: 270, background: "#181818", borderRadius: 6 }} />
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
+        <div className="filmstrip" aria-hidden="true" />
 
-      <HeroIntro />
+        <section className="showing" aria-labelledby="showing-title">
+          <div className="section-head">
+            <span className="stamp">Tonight&apos;s programme</span>
+            <h2 id="showing-title" className="section-title">
+              The highest rated, always turning
+            </h2>
+            <p className="section-note">
+              Pick any title to read its story. Or switch the set on and let the projectionist
+              choose for you.
+            </p>
+          </div>
 
-      {(selectedMovie || modalLoading) && (
-        <div
-          onClick={() => setSelectedMovie(null)}
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            zIndex: 50, padding: 24,
-          }}
-        >
+          <div className="rail">
+            {movies.map((movie) => (
+              <button
+                key={movie.id}
+                type="button"
+                className="ticket"
+                onClick={() => openMovie(movie.id)}
+                aria-label={`Open ${movie.title}`}
+              >
+                <span className="ticket-poster">
+                  {movie.poster_path ? (
+                    <img
+                      src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`}
+                      alt=""
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        display: "block",
+                        height: "clamp(220px, 58vw, 280px)",
+                        background: "var(--ink-raised)",
+                      }}
+                    />
+                  )}
+                </span>
+                <span className="ticket-stub">
+                  <span className="ticket-title">{movie.title}</span>
+                  {movie.release_date && (
+                    <span className="ticket-year">{movie.release_date.slice(0, 4)}</span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      </main>
+
+      <footer className="site-footer">
+        <span>Kinema — a living reel</span>
+        <span>Film data by TMDB</span>
+      </footer>
+
+      {isModalOpen && (
+        <div className="scrim" onClick={() => setSelectedMovie(null)}>
           <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={selectedMovie ? selectedMovie.title : "Loading film details"}
+            tabIndex={-1}
+            className="sheet"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "#111", borderRadius: 12, maxWidth: 640, width: "100%",
-              display: "flex", gap: 24, padding: 28, boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
-            }}
           >
             {modalLoading ? (
-              <p style={{ color: "#888" }}>Loading…</p>
+              <p style={{ color: "var(--muted)" }}>Loading…</p>
             ) : selectedMovie ? (
               <>
                 {selectedMovie.poster_path && (
                   <img
-                    src={`https://image.tmdb.org/t/p/w500${selectedMovie.poster_path}`}
-                    alt={selectedMovie.title}
-                    style={{ width: 160, height: 240, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
+                    src={`https://image.tmdb.org/t/p/w780${selectedMovie.poster_path}`}
+                    alt=""
                   />
                 )}
                 <div>
-                  <h2 style={{ margin: "0 0 8px", fontSize: "1.5rem" }}>{selectedMovie.title}</h2>
+                  <h2>{selectedMovie.title}</h2>
                   {selectedMovie.release_date && (
-                    <p style={{ color: "#888", fontSize: "0.9rem", margin: "0 0 16px" }}>
+                    <p className="ticket-year" style={{ marginBottom: "var(--space-4)" }}>
                       {selectedMovie.release_date.slice(0, 4)}
                     </p>
                   )}
-                  <p style={{ color: "#ccc", lineHeight: 1.6, fontSize: "0.95rem" }}>
+                  <p style={{ color: "var(--muted)", lineHeight: 1.7 }}>
                     {selectedMovie.overview || "No description available."}
                   </p>
                   <button
+                    type="button"
                     onClick={() => setSelectedMovie(null)}
-                    style={{ marginTop: 20, background: "#6b0016", color: "#fff", border: "none", borderRadius: 6, padding: "8px 20px", cursor: "pointer" }}
+                    className="btn btn-ghost"
+                    style={{ marginTop: "var(--space-5)" }}
                   >
                     Close
                   </button>

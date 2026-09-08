@@ -1,5 +1,5 @@
 "use client";
-import { getFilmStripPath } from "../../lib/filmStripPath";
+import { getFilmStripPath } from "../filmStripPath";
 
 const FRAME_WIDTH = 180;
 const FRAME_HEIGHT = 130;
