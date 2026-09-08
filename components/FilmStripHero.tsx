@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { HOMEPAGE_FILMS } from "@/lib/homepageFilms";
-import { playButtonPress, playChannelStatic, playPower, setMuted } from "@/lib/tvAudio";
+import { playButtonPress, playPower, setMuted } from "@/lib/tvAudio";
 import { HEAD_PIVOT, RIG, useCharacterRig, type RigMood } from "@/lib/characterRig";
 
 type Channel = {
@@ -276,7 +276,6 @@ export default function FilmStripHero({
   const changeChannel = useCallback(
     (direction: 1 | -1) => {
       if (!isLive || isGlitching || channels.length === 0) return;
-      playChannelStatic(GLITCH_MS);
       setIsGlitching(true);
       glitchTimerRef.current = setTimeout(() => {
         setPictureReady(false);

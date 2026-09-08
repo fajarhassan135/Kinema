@@ -42,22 +42,6 @@ function noiseBuffer(c: AudioContext, seconds: number) {
 }
 
 /**
- * Hard-clipping curve for a WaveShaperNode. Nonlinear clipping adds overtones,
- * which is what makes the channel-change burst sound gritty and electrical
- * rather than like a clean filtered noise sweep.
- */
-function makeClippingCurve(amount: number) {
-  const n = 8192;
-  const curve = new Float32Array(n);
-  const deg = Math.PI / 180;
-  for (let i = 0; i < n; i++) {
-    const x = (i * 2) / n - 1;
-    curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
-  }
-  return curve;
-}
-
-/**
  * Rubber-dome remote button: a bright plastic tick layered over a small
  * low thud, so it reads as a physical press rather than a beep. `down`
  * gives the sharper press; `up` is the softer release.
@@ -167,56 +151,3 @@ export function playPower(on: boolean) {
     collapse.stop(t0 + 0.4);
   }
 }
-
-/**
- * Channel change: an unstable sawtooth pushed through hard clipping, so the
- * result buzzes and tears like a tuner losing lock. Duration is passed in by
- * the caller so it stays synced to the on-screen static.
- */
-export function playChannelStatic(durationMs: number) {
-  if (_muted) return;
-  const c = ctx();
-  if (!c) return;
-  const dur = durationMs / 1000;
-  const now = c.currentTime;
-
-  const shaper = c.createWaveShaper();
-  shaper.curve = makeClippingCurve(650);
-  shaper.oversample = "4x";
-
-  // A signal that cannot hold a lock: pitch jitters every 20ms.
-  const osc = c.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.setValueAtTime(90, now);
-  for (let t = 0; t < dur; t += 0.02) {
-    osc.frequency.setValueAtTime(60 + Math.random() * 180, now + t);
-  }
-
-  const tone = c.createBiquadFilter();
-  tone.type = "bandpass";
-  tone.Q.value = 0.6;
-  tone.frequency.setValueAtTime(1800, now);
-  tone.frequency.exponentialRampToValueAtTime(220, now + dur);
-
-  const gain = c.createGain();
-  gain.gain.setValueAtTime(0.11, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-
-  osc.connect(shaper).connect(tone).connect(gain).connect(c.destination);
-  osc.start(now);
-  osc.stop(now + dur);
-
-  // Snow on top of the tear, so it reads as picture loss and not just a buzz.
-  const snow = c.createBufferSource();
-  snow.buffer = noiseBuffer(c, dur);
-  const snowFilter = c.createBiquadFilter();
-  snowFilter.type = "highpass";
-  snowFilter.frequency.value = 1400;
-  const snowGain = c.createGain();
-  snowGain.gain.setValueAtTime(0.07, now);
-  snowGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-  snow.connect(snowFilter).connect(snowGain).connect(c.destination);
-  snow.start(now);
-  snow.stop(now + dur);
-}
-
