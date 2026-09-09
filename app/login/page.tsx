@@ -3,29 +3,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
-
-/** Minimum Supabase allows is 6; 10 with some variety is a meaningful floor. */
-const MIN_PASSWORD_LENGTH = 10;
-
-/**
- * Rejects the passwords that actually get broken: too short, single
- * character class, or one of the handful everyone tries first. Supabase
- * still enforces its own rules server-side; this is the fast, clear failure.
- */
-function passwordProblem(password: string): string | null {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
-  }
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((re) => re.test(password)).length;
-  if (classes < 3) {
-    return "Use at least three of: lowercase, uppercase, numbers, symbols.";
-  }
-  const common = ["password", "12345678", "qwerty", "letmein", "welcome", "iloveyou", "admin"];
-  if (common.some((c) => password.toLowerCase().includes(c))) {
-    return "That password is too easy to guess.";
-  }
-  return null;
-}
+import PasswordField from "../../components/PasswordField";
+import { MIN_PASSWORD_LENGTH, passwordProblem } from "../../lib/passwordPolicy";
 
 type Mode = "login" | "signup";
 /**
@@ -292,17 +271,13 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #333", background: "#111", color: "#fff" }}
               />
-              <input
-                type="password"
+              <PasswordField
                 required
                 minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : 6}
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                aria-label="Password"
-                aria-describedby={mode === "signup" ? "password-requirements" : undefined}
-                placeholder="Password"
+                ariaDescribedBy={mode === "signup" ? "password-requirements" : undefined}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #333", background: "#111", color: "#fff" }}
+                onChange={setPassword}
               />
               {mode === "signup" && (
                 <p
@@ -446,17 +421,15 @@ export default function LoginPage() {
               onChange={(e) => setCode(e.target.value)}
               style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #333", background: "#111", color: "#fff", textAlign: "center", letterSpacing: "4px", fontSize: "1.1rem" }}
             />
-            <input
-              type="password"
+            <PasswordField
               required
               minLength={MIN_PASSWORD_LENGTH}
               autoComplete="new-password"
-              aria-label="New password"
-              aria-describedby="reset-password-requirements"
+              ariaLabel="New password"
+              ariaDescribedBy="reset-password-requirements"
               placeholder="New password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #333", background: "#111", color: "#fff" }}
+              onChange={setNewPassword}
             />
             <p
               id="reset-password-requirements"

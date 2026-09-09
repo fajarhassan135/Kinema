@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import MovieModal from "../../components/MovieModal";
 import NavBar from "../../components/NavBar";
+import PasswordField from "../../components/PasswordField";
+import { MIN_PASSWORD_LENGTH, passwordProblem } from "../../lib/passwordPolicy";
 
 type FavoriteRow = { movie_id: number; movie_title: string; poster_path: string | null };
 type Movie = { id: number; title: string; poster_path: string | null; overview?: string; release_date?: string };
@@ -104,8 +106,9 @@ export default function ProfilePage() {
   }
 
   async function handleChangePassword() {
-    if (!newPassword || newPassword.length < 6) {
-      setPasswordMsg("Password must be at least 6 characters.");
+    const problem = passwordProblem(newPassword);
+    if (problem) {
+      setPasswordMsg(problem);
       return;
     }
     const { error } = await supabase.auth.updateUser({ password: newPassword });
@@ -259,18 +262,32 @@ export default function ProfilePage() {
         <div style={{ marginBottom: 32, paddingTop: 20, borderTop: "1px solid #1c1c1c" }}>
           <h2 style={{ fontSize: "1.1rem", marginBottom: 12 }}>Change Password</h2>
           <div style={{ display: "flex", gap: 10 }}>
-            <input
-              type="password"
+            <PasswordField
+              fill
+              minLength={MIN_PASSWORD_LENGTH}
+              autoComplete="new-password"
+              ariaLabel="New password"
+              ariaDescribedBy="profile-password-requirements"
               placeholder="New password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              style={{ flex: 1, padding: "10px 14px", borderRadius: 6, border: "1px solid #333", background: "#111", color: "#fff" }}
+              onChange={setNewPassword}
             />
             <button onClick={handleChangePassword} style={{ padding: "10px 20px", borderRadius: 6, border: "none", background: "#6b0016", color: "#fff", cursor: "pointer" }}>
               Update
             </button>
           </div>
-          {passwordMsg && <p style={{ color: "#e0bfc7", fontSize: "0.85rem", marginTop: 8 }}>{passwordMsg}</p>}
+          <p
+            id="profile-password-requirements"
+            style={{ color: "#8a8a8a", fontSize: "0.78rem", marginTop: 8, lineHeight: 1.5 }}
+          >
+            At least {MIN_PASSWORD_LENGTH} characters, mixing three of: lowercase,
+            uppercase, numbers, symbols.
+          </p>
+          {passwordMsg && (
+            <p role="status" style={{ color: "#e0bfc7", fontSize: "0.85rem", marginTop: 8 }}>
+              {passwordMsg}
+            </p>
+          )}
         </div>
 
         <div style={{ paddingTop: 20, borderTop: "1px solid #1c1c1c" }}>
