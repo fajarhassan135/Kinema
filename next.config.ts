@@ -32,7 +32,10 @@ const csp = [
   "object-src 'none'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://image.tmdb.org",
+  // Avatars are served from Supabase storage, so that origin has to be allowed
+  // here too — without it the browser silently blocks the image and the
+  // profile picture sits there loading forever.
+  `img-src 'self' data: blob: https://image.tmdb.org${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,
   "font-src 'self' data:",
   `connect-src 'self'${supabaseOrigin ? ` ${supabaseOrigin}` : ""}${
     isDev ? " ws://localhost:* http://localhost:*" : ""
