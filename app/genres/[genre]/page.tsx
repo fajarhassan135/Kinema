@@ -4,6 +4,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 import MovieModal from "../../../components/MovieModal";
+import PosterCard from "../../../components/PosterCard";
+import PosterGridSkeleton from "../../../components/PosterGridSkeleton";
 import NavBar from "../../../components/NavBar";
 
 type Movie = {
@@ -116,82 +118,74 @@ export default function GenrePage() {
 
   if (checkingAuth) {
     return (
-      <div style={{ minHeight: "100vh", background: "#000", color: "#888", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        Loading…
+      <div className="app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="bulbs" aria-label="Loading">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <span key={i} className="bulb" />
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000", color: "#fff", fontFamily: "'Montserrat', Arial, sans-serif" }}>
+    <div className="app-shell">
+      <div className="grain" aria-hidden="true" />
 
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 40px", borderBottom: "1px solid #1c1c1c", flexWrap: "wrap", gap: 16 }}>
-      <img src="/logo.png" alt="Kinema logo" style={{ width: 130, height: 130, borderRadius: "50%" }} />
+      <header className="app-bar">
+        <Link href="/dashboard" aria-label="Kinema home">
+          <img src="/logo.png" alt="" className="app-bar-logo" />
+        </Link>
         <NavBar current="genres" />
       </header>
 
-      <main style={{ padding: "40px" }}>
+      <main className="page-main">
         <h1 style={{ fontSize: "1.8rem", marginBottom: 24 }}>
           {currentGenre ? currentGenre.label : "Genre"}
         </h1>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+        <div className="chip-row" role="list" aria-label="Genres">
           {GENRES.map((g) => (
             <Link
               key={g.slug}
               href={`/genres/${g.slug}`}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 20,
-                fontSize: "0.85rem",
-                textDecoration: "none",
-                background: g.slug === genreSlug ? "#6b0016" : "#181818",
-                color: g.slug === genreSlug ? "#fff" : "#ccc",
-                border: g.slug === genreSlug ? "1px solid #c9a227" : "1px solid #333",
-              }}
+              role="listitem"
+              className={`chip${g.slug === genreSlug ? " is-active" : ""}`}
+              aria-current={g.slug === genreSlug ? "page" : undefined}
             >
               {g.label}
             </Link>
           ))}
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 40 }}>
+        <div className="chip-row" style={{ marginBottom: "var(--space-7)" }}>
           {(["all", "PK", "IN"] as Region[]).map((r) => (
             <button
               key={r}
+              type="button"
               onClick={() => setRegion(r)}
-              style={{
-                padding: "6px 16px",
-                borderRadius: 6,
-                fontSize: "0.8rem",
-                cursor: "pointer",
-                background: region === r ? "#c9a227" : "#111",
-                color: region === r ? "#000" : "#ccc",
-                border: "1px solid #333",
-              }}
+              className={`chip chip-sm${region === r ? " is-active" : ""}`}
+              aria-pressed={region === r}
             >
               {r === "all" ? "All" : r === "PK" ? "Pakistani" : "Indian"}
             </button>
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 24 }}>
-          {movies.map((movie, i) => (
-            <div key={`${movie.id}-${i}`} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
-              {movie.poster_path ? (
-                <img
-                  src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`}
-                  alt={movie.title}
-                  style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }}
-                />
-              ) : (
-                <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />
-              )}
-              <p style={{ marginTop: 8, fontSize: "0.85rem", color: "#ccc" }}>{movie.title}</p>
-            </div>
-          ))}
-        </div>
-
+        {movies.length === 0 && loading ? (
+          <PosterGridSkeleton />
+        ) : movies.length === 0 ? (
+          <div className="empty-state">
+            <span className="empty-state-title">Nothing showing here</span>
+            <p>No films for this combination. Try another genre or region.</p>
+          </div>
+        ) : (
+          <div className="poster-grid">
+            {movies.map((movie, i) => (
+              <PosterCard key={`${movie.id}-${i}`} movie={movie} index={i} onOpen={setSelectedMovie} />
+            ))}
+          </div>
+        )}
         <div ref={sentinelRef} style={{ height: 40, marginTop: 20 }} />
 
         {loading && <p style={{ color: "#888", textAlign: "center" }}>Loading more…</p>}

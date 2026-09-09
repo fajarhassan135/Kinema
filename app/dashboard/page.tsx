@@ -1,9 +1,12 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import NavBar from "../../components/NavBar";
 import MovieModal from "../../components/MovieModal";
+import PosterCard from "../../components/PosterCard";
+import PosterGridSkeleton from "../../components/PosterGridSkeleton";
 
 type Movie = {
   id: number;
@@ -134,140 +137,147 @@ export default function DashboardPage() {
 
   if (checkingAuth) {
     return (
-      <div style={{ minHeight: "100vh", background: "#000", color: "#888", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        Loading…
+      <div className="app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="bulbs" aria-label="Loading">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <span key={i} className="bulb" />
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000", color: "#fff", fontFamily: "'Montserrat', Arial, sans-serif" }}>
+    <div className="app-shell">
+      <div className="grain" aria-hidden="true" />
 
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 40px", borderBottom: "1px solid #1c1c1c", flexWrap: "wrap", gap: 16 }}>
-        <img src="/logo.png" alt="Kinema logo" style={{ width: 130, height: 130, borderRadius: "50%" }} />
+      <header className="app-bar">
+        <Link href="/" aria-label="Kinema home">
+          <img src="/logo.png" alt="" className="app-bar-logo" />
+        </Link>
 
         <NavBar current="home" />
 
-        <div style={{ position: "relative" }}>
-          <form onSubmit={handleSearch} style={{ display: "flex", gap: 8 }}>
+        <span className="app-bar-spacer" />
+
+        <div className="app-bar-search">
+          <form onSubmit={handleSearch} className="search-form">
             <input
-              type="text"
+              type="search"
+              className="search-input"
               placeholder="Search films…"
+              aria-label="Search films"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={(e) => { setShowSuggestions(true); e.currentTarget.style.borderColor = "#c9a227"; }}
-              onBlur={(e) => { setTimeout(() => setShowSuggestions(false), 150); e.currentTarget.style.borderColor = "#333"; }}
-              style={{
-                padding: "8px 14px", borderRadius: 6, border: "1px solid #333",
-                background: "#111", color: "#fff", width: 200, outline: "none",
-              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
             />
-            <button
-              type="submit"
-              style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: "#6b0016", color: "#fff", cursor: "pointer", fontSize: "0.85rem" }}
-            >
+            <button type="submit" className="btn btn-primary" style={{ padding: "10px 18px" }}>
               Search
             </button>
           </form>
 
           {showSuggestions && searchQuery.trim() !== "" && suggestions.length > 0 && (
-            <div style={{
-              position: "absolute", top: "100%", left: 0, marginTop: 6, width: 260,
-              background: "#111", border: "1px solid #333", borderRadius: 8,
-              overflow: "hidden", zIndex: 40,
-            }}>
+            <div className="suggest-panel">
               {suggestions.map((movie) => (
-                <div
+                <button
                   key={movie.id}
-                  onClick={() => { setSelectedMovie(movie); setSearchQuery(""); setShowSuggestions(false); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
-                    cursor: "pointer", borderBottom: "1px solid #1e1e1e",
+                  type="button"
+                  className="suggest-item"
+                  onClick={() => {
+                    setSelectedMovie(movie);
+                    setSearchQuery("");
+                    setShowSuggestions(false);
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "#1a1a1a")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w185${movie.poster_path}`} alt={movie.title}
-                      style={{ width: 32, height: 48, objectFit: "cover", borderRadius: 4 }} />
+                    <img src={`https://image.tmdb.org/t/p/w185${movie.poster_path}`} alt="" />
                   ) : (
-                    <div style={{ width: 32, height: 48, background: "#181818", borderRadius: 4 }} />
+                    <span style={{ width: 32, height: 48, background: "var(--ink-raised)", borderRadius: 4, flexShrink: 0 }} />
                   )}
-                  <span style={{ fontSize: "0.85rem", color: "#ccc" }}>{movie.title}</span>
-                </div>
+                  <span style={{ fontSize: "var(--text-sm)" }}>{movie.title}</span>
+                </button>
               ))}
             </div>
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {userEmail && <span style={{ color: "#888", fontSize: "0.85rem" }}>{userEmail}</span>}
-          <button
-            onClick={handleLogout}
-            style={{ background: "none", border: "1px solid #333", color: "#ccc", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: "0.85rem" }}
-          >
-            Log Out
-          </button>
-        </div>
+        {userEmail && <span className="app-bar-user">{userEmail}</span>}
+        <button onClick={handleLogout} className="btn btn-ghost" style={{ padding: "8px 16px" }}>
+          Log Out
+        </button>
       </header>
 
-      <main style={{ padding: "40px 40px 80px" }}>
+      <main className="page-main">
         {searchResults ? (
           <>
-            <h2 style={{ fontSize: "1.4rem", marginBottom: 4 }}>Results for &quot;{searchQuery}&quot;</h2>
-            <p style={{ color: "#888", fontSize: "0.9rem", marginBottom: 28 }}>{searchResults.length} films found</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 24 }}>
-              {searchResults.map((movie) => (
-                <div key={movie.id} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
-                  {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
-                      style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }} />
-                  ) : (
-                    <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />
-                  )}
-                  <p style={{ marginTop: 8, fontSize: "0.85rem", color: "#ccc" }}>{movie.title}</p>
-                </div>
-              ))}
+            <div className="row-head">
+              <span className="stamp">Search</span>
+              <h2 className="page-title">Results for &quot;{searchQuery}&quot;</h2>
+              <p className="page-lede">
+                {searchResults.length} {searchResults.length === 1 ? "film" : "films"} found
+              </p>
             </div>
-            {searchResults.length === 0 && <p style={{ color: "#666", marginTop: 40 }}>No films to show.</p>}
+            {searchResults.length === 0 ? (
+              <div className="empty-state">
+                <span className="empty-state-title">Nothing on this reel</span>
+                <p>No films matched that search. Try a different title.</p>
+              </div>
+            ) : (
+              <div className="poster-grid">
+                {searchResults.map((movie, i) => (
+                  <PosterCard key={movie.id} movie={movie} index={i} onOpen={setSelectedMovie} />
+                ))}
+              </div>
+            )}
           </>
         ) : (
           <>
-            <h2 style={{ fontSize: "1.4rem", marginBottom: 4 }}>New in 2026</h2>
-            <p style={{ color: "#888", fontSize: "0.9rem", marginBottom: 28 }}>The latest releases this year</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 24 }}>
-              {movies2026.map((movie, i) => (
-                <div key={`${movie.id}-${i}`} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
-                  {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
-                      style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }} />
-                  ) : (
-                    <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />
-                  )}
-                  <p style={{ marginTop: 8, fontSize: "0.85rem", color: "#ccc" }}>{movie.title}</p>
-                </div>
-              ))}
+            <div className="row-head">
+              <span className="stamp">This year</span>
+              <h2 className="page-title">New in 2026</h2>
+              <p className="page-lede">The latest releases this year</p>
             </div>
+            {movies2026.length === 0 && loading2026 ? (
+              <PosterGridSkeleton />
+            ) : (
+              <div className="poster-grid">
+                {movies2026.map((movie, i) => (
+                  <PosterCard key={`${movie.id}-${i}`} movie={movie} index={i} onOpen={setSelectedMovie} />
+                ))}
+              </div>
+            )}
             <div ref={sentinel2026Ref} style={{ height: 20, marginTop: 20 }} />
-            {loading2026 && <p style={{ color: "#888", textAlign: "center" }}>Loading more…</p>}
+            {loading2026 && movies2026.length > 0 && (
+              <div className="bulbs" aria-label="Loading more films">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <span key={i} className="bulb" />
+                ))}
+              </div>
+            )}
 
-            <h2 style={{ fontSize: "1.4rem", marginTop: 56, marginBottom: 4 }}>Released in 2025</h2>
-            <p style={{ color: "#888", fontSize: "0.9rem", marginBottom: 28 }}>Films from last year</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 24 }}>
-              {movies2025.map((movie, i) => (
-                <div key={`${movie.id}-${i}`} onClick={() => setSelectedMovie(movie)} style={{ cursor: "pointer" }}>
-                  {movie.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`} alt={movie.title}
-                      style={{ width: "100%", height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }} />
-                  ) : (
-                    <div style={{ width: "100%", height: 240, background: "#181818", borderRadius: 6 }} />
-                  )}
-                  <p style={{ marginTop: 8, fontSize: "0.85rem", color: "#ccc" }}>{movie.title}</p>
-                </div>
-              ))}
+            <div className="row-head">
+              <span className="stamp">Last year</span>
+              <h2 className="page-title">Released in 2025</h2>
+              <p className="page-lede">Films from last year</p>
             </div>
+            {movies2025.length === 0 && loading2025 ? (
+              <PosterGridSkeleton />
+            ) : (
+              <div className="poster-grid">
+                {movies2025.map((movie, i) => (
+                  <PosterCard key={`${movie.id}-${i}`} movie={movie} index={i} onOpen={setSelectedMovie} />
+                ))}
+              </div>
+            )}
             <div ref={sentinel2025Ref} style={{ height: 20, marginTop: 20 }} />
-            {loading2025 && <p style={{ color: "#888", textAlign: "center" }}>Loading more…</p>}
+            {loading2025 && movies2025.length > 0 && (
+              <div className="bulbs" aria-label="Loading more films">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <span key={i} className="bulb" />
+                ))}
+              </div>
+            )}
           </>
         )}
       </main>

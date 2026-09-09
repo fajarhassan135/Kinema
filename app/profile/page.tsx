@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import MovieModal from "../../components/MovieModal";
 import NavBar from "../../components/NavBar";
 import PasswordField from "../../components/PasswordField";
+import { toast } from "../../lib/toast";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../../lib/passwordPolicy";
 
 type FavoriteRow = { movie_id: number; movie_title: string; poster_path: string | null };
@@ -68,19 +70,48 @@ export default function ProfilePage() {
   }, [router]);
 
   async function handleSaveName() {
-    if (!userId || !nameInput.trim()) return;
+    if (!userId) return;
+    const name = nameInput.trim();
+    if (!name) {
+      toast.error("Display name cannot be empty.");
+      return;
+    }
+    if (name === displayName) {
+      toast.info("That is already your display name.");
+      return;
+    }
+
     setSavingName(true);
     const { error } = await supabase
       .from("profiles")
-      .update({ display_name: nameInput.trim() })
+      .update({ display_name: name })
       .eq("id", userId);
     setSavingName(false);
-    if (!error) setDisplayName(nameInput.trim());
+
+    // This used to swallow the error and stay silent on success, so there was
+    // no way to tell whether anything had happened.
+    if (error) {
+      toast.error("Could not save your name. Try again.");
+      return;
+    }
+    setDisplayName(name);
+    toast.success(`Saved — you are ${name}`);
   }
 
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !userId) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("That file is not an image.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Images must be under 5MB.");
+      e.target.value = "";
+      return;
+    }
 
     setUploading(true);
     const filePath = `${userId}/avatar.${file.name.split(".").pop()}`;
@@ -91,7 +122,9 @@ export default function ProfilePage() {
 
     if (uploadError) {
       setUploading(false);
-      alert("Upload failed: " + uploadError.message);
+      // A browser alert() blocks the page and looks nothing like the rest of
+      // the app; the toast says the same thing without stopping everything.
+      toast.error("Could not upload that image.");
       e.target.value = "";
       return;
     }
@@ -103,6 +136,7 @@ export default function ProfilePage() {
     setAvatarUrl(freshUrl);
     setUploading(false);
     e.target.value = "";
+    toast.success("New photo saved.");
   }
 
   async function handleChangePassword() {
@@ -114,9 +148,11 @@ export default function ProfilePage() {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) {
       setPasswordMsg(error.message);
+      toast.error("Could not update your password.");
     } else {
-      setPasswordMsg("Password updated.");
+      setPasswordMsg("");
       setNewPassword("");
+      toast.success("Password updated.");
     }
   }
 
@@ -167,15 +203,17 @@ export default function ProfilePage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000", color: "#fff", fontFamily: "'Montserrat', Arial, sans-serif" }}>
+    <div className="app-shell">
+      <div className="grain" aria-hidden="true" />
 
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 40px", borderBottom: "1px solid #1c1c1c", flexWrap: "wrap", gap: 16 }}>
-      <img src="/logo.png" alt="Kinema logo" style={{ width: 130, height: 130, borderRadius: "50%" }} />
-
+      <header className="app-bar">
+        <Link href="/dashboard" aria-label="Kinema home">
+          <img src="/logo.png" alt="" className="app-bar-logo" />
+        </Link>
         <NavBar current="profile" />
       </header>
 
-      <main style={{ padding: "40px", maxWidth: 720, margin: "0 auto" }}>
+      <main className="page-main" style={{ maxWidth: 760 }}>
         <h1 style={{ fontSize: "1.8rem", marginBottom: 32 }}>Profile</h1>
 
         <div style={{ display: "flex", gap: 24, alignItems: "center", marginBottom: 40 }}>

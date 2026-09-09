@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { toast } from "../lib/toast";
 
 type Movie = {
   id: number;
@@ -67,11 +68,13 @@ export default function MovieModal({ movie, onClose }: Props) {
     if (inWatchlist) {
       await supabase.from("watchlist").delete().eq("user_id", userId).eq("movie_id", movie.id);
       setInWatchlist(false);
+      toast.info(`Removed ${movie.title} from your watchlist`);
     } else {
       await supabase.from("watchlist").insert({
         user_id: userId, movie_id: movie.id, movie_title: movie.title, poster_path: movie.poster_path,
       });
       setInWatchlist(true);
+      toast.success(`Added ${movie.title} to your watchlist`);
     }
     setSaving(false);
   }
@@ -99,6 +102,7 @@ export default function MovieModal({ movie, onClose }: Props) {
       setFavoritesList((prev) => prev.filter((f) => f.movie_id !== movie.id));
       setIsFavorite(false);
       setSaving(false);
+      toast.info(`${movie.title} is no longer a favourite`);
       return;
     }
     if (favoritesList.length >= 5) {
@@ -112,6 +116,7 @@ export default function MovieModal({ movie, onClose }: Props) {
     setFavoritesList((prev) => [...prev, { movie_id: movie.id, movie_title: movie.title }]);
     setIsFavorite(true);
     setSaving(false);
+    toast.success(`${movie.title} added to your top five`);
   }
 
   async function replaceFavorite(oldMovieId: number) {

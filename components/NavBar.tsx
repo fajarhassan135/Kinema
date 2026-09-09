@@ -1,5 +1,4 @@
 "use client";
-import { useState } from "react";
 import Link from "next/link";
 import { Home, LayoutGrid, Bookmark, Star, User, Film } from "lucide-react";
 
@@ -14,35 +13,26 @@ const NAV_ITEMS: { page: Page; href: string; icon: React.ElementType; label: str
   { page: "profile", href: "/profile", icon: User, label: "Profile" },
 ];
 
+/**
+ * Icon-only navigation was unlabelled apart from a `title` tooltip, which
+ * phones never show — so on touch the icons were unidentifiable. The label now
+ * renders under each icon on small screens and the current page is marked with
+ * aria-current instead of colour alone.
+ */
 export default function NavBar({ current }: { current: Page }) {
-  const [hovered, setHovered] = useState<Page | null>(null);
-
   return (
-    <nav style={{ display: "flex", gap: 28, alignItems: "center" }}>
+    <nav className="nav-rail" aria-label="Main">
       {NAV_ITEMS.map(({ page, href, icon: Icon, label }) => {
-        const isActive = current === page || hovered === page;
-        const isHovered = hovered === page;
+        const isActive = current === page;
         return (
           <Link
             key={page}
             href={href}
-            title={label}
-            onMouseEnter={() => setHovered(page)}
-            onMouseLeave={() => setHovered(null)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              color: current === page ? "#ffffff" : "#ccc",
-              textDecoration: "none",
-              transform: isHovered ? "scale(1.25)" : "scale(1)",
-              transition: "transform 0.15s ease, color 0.15s ease",
-            }}
+            className={`nav-item${isActive ? " is-active" : ""}`}
+            aria-current={isActive ? "page" : undefined}
           >
-            <Icon
-              size={20}
-              fill={isActive ? "currentColor" : "none"}
-              style={{ transition: "fill 0.15s ease" }}
-            />
+            <Icon size={20} fill={isActive ? "currentColor" : "none"} aria-hidden="true" />
+            <span className="nav-label">{label}</span>
           </Link>
         );
       })}

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import MovieModal from "../../components/MovieModal";
 import NavBar from "../../components/NavBar";
@@ -139,93 +140,95 @@ export default function ReviewsPage() {
   const list = tab === "mine" ? myReviews : allReviews;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000", color: "#fff", fontFamily: "'Montserrat', Arial, sans-serif" }}>
+    <div className="app-shell">
+      <div className="grain" aria-hidden="true" />
 
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 40px", borderBottom: "1px solid #1c1c1c", flexWrap: "wrap", gap: 16 }}>
-      <img src="/logo.png" alt="Kinema logo" style={{ width: 130, height: 130, borderRadius: "50%" }} />
-
+      <header className="app-bar">
+        <Link href="/dashboard" aria-label="Kinema home">
+          <img src="/logo.png" alt="" className="app-bar-logo" />
+        </Link>
         <NavBar current="reviews" />
       </header>
 
-      <main style={{ padding: "40px" }}>
-        <h1 style={{ fontSize: "1.8rem", marginBottom: 24 }}>Reviews</h1>
+      <main className="page-main">
+        <div className="row-head">
+          <span className="stamp">The critics</span>
+          <h1 className="page-title">Reviews</h1>
+          <p className="page-lede">What you thought, and what everyone else thought.</p>
+        </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 32 }}>
-          <button
-            onClick={() => setTab("mine")}
-            style={{
-              padding: "8px 20px", borderRadius: 6, fontSize: "0.85rem", cursor: "pointer",
-              background: tab === "mine" ? "#6b0016" : "#181818",
-              color: "#fff", border: tab === "mine" ? "1px solid #c9a227" : "1px solid #333",
-            }}
-          >
-            My Reviews
-          </button>
-          <button
-            onClick={() => setTab("all")}
-            style={{
-              padding: "8px 20px", borderRadius: 6, fontSize: "0.85rem", cursor: "pointer",
-              background: tab === "all" ? "#6b0016" : "#181818",
-              color: "#fff", border: tab === "all" ? "1px solid #c9a227" : "1px solid #333",
-            }}
-          >
-            All Reviews
-          </button>
+        <div className="chip-row" role="tablist" aria-label="Which reviews">
+          {([
+            ["mine", "My reviews"],
+            ["all", "Everyone"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              onClick={() => setTab(value)}
+              className={`chip${tab === value ? " is-active" : ""}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
-          <p style={{ color: "#888" }}>Loading…</p>
+          <div className="review-list">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="review-card is-skeleton" style={{ animationDelay: `${i * 110}ms` }}>
+                <span className="review-poster" />
+                <span style={{ flex: 1 }}>
+                  <span className="poster-skeleton-line" style={{ width: "45%" }} />
+                  <span className="poster-skeleton-line short" />
+                  <span className="poster-skeleton-line" style={{ width: "88%" }} />
+                </span>
+              </div>
+            ))}
+          </div>
         ) : list.length === 0 ? (
-          <p style={{ color: "#666" }}>
-            {tab === "mine" ? "You haven't written any reviews yet." : "No reviews yet."}
-          </p>
+          <div className="empty-state">
+            <span className="empty-state-title">
+              {tab === "mine" ? "No reviews yet" : "Nobody has written anything"}
+            </span>
+            <p>
+              {tab === "mine"
+                ? "Open any film and leave the first word on it."
+                : "Be the first to review something."}
+            </p>
+          </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {list.map((review) => (
-              <div
+          <div className="review-list">
+            {list.map((review, i) => (
+              <article
                 key={review.id}
-                style={{ display: "flex", gap: 18, background: "#111", borderRadius: 10, padding: 18, border: "1px solid #1e1e1e" }}
+                className="review-card"
+                style={{ animationDelay: `${Math.min(i, 8) * 60}ms` }}
               >
-                <div
+                <button
+                  type="button"
+                  className="review-poster-btn"
                   onClick={() => handleOpenMovie(review.movie_id, review.movie_title, review.poster_path)}
-                  style={{ cursor: "pointer", flexShrink: 0 }}
+                  aria-label={`Open ${review.movie_title}`}
                 >
                   {review.poster_path ? (
-                    <img
-                      src={`https://image.tmdb.org/t/p/w780${review.poster_path}`}
-                      alt={review.movie_title}
-                      style={{ width: 80, height: 120, objectFit: "cover", borderRadius: 6 }}
-                    />
+                    <img src={`https://image.tmdb.org/t/p/w342${review.poster_path}`} alt="" loading="lazy" />
                   ) : (
-                    <div style={{ width: 80, height: 120, background: "#181818", borderRadius: 6 }} />
+                    <span className="review-poster-empty" />
                   )}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, marginBottom: 4 }}>{review.movie_title}</p>
+                </button>
+
+                <div className="review-body">
+                  <h2 className="review-title">{review.movie_title}</h2>
                   {tab === "all" && (
-                    <p style={{ fontSize: "0.8rem", color: "#888", marginBottom: 6 }}>
-                      by {(review as ReviewWithName).display_name}
-                    </p>
+                    <p className="review-author">by {(review as ReviewWithName).display_name}</p>
                   )}
                   <StarDisplay rating={review.rating} />
-                  {review.review_text && (
-                    <p style={{ color: "#ccc", fontSize: "0.9rem", marginTop: 8, lineHeight: 1.5 }}>
-                      {review.review_text}
-                    </p>
-                  )}
-                  <p style={{ color: "#555", fontSize: "0.75rem", marginTop: 8 }}>
-                    {new Date(review.created_at).toLocaleDateString()}
-                  </p>
-                  {tab === "mine" && (
-                    <button
-                      onClick={() => handleDelete(review.id)}
-                      style={{ marginTop: 10, background: "none", border: "1px solid #333", color: "#999", borderRadius: 4, padding: "4px 14px", fontSize: "0.75rem", cursor: "pointer" }}
-                    >
-                      Delete
-                    </button>
-                  )}
+                  {review.review_text && <p className="review-text">{review.review_text}</p>}
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}
