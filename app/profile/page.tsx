@@ -6,6 +6,7 @@ import { supabase } from "../../lib/supabase";
 import MovieModal from "../../components/MovieModal";
 import NavBar from "../../components/NavBar";
 import PasswordField from "../../components/PasswordField";
+import TasteStats from "../../components/TasteStats";
 import { toast } from "../../lib/toast";
 import { MIN_PASSWORD_LENGTH, passwordProblem } from "../../lib/passwordPolicy";
 
@@ -26,6 +27,8 @@ export default function ProfilePage() {
 
   const [watchlistCount, setWatchlistCount] = useState(0);
   const [reviewsCount, setReviewsCount] = useState(0);
+  const [watchedCount, setWatchedCount] = useState(0);
+  const [ratings, setRatings] = useState<number[]>([]);
   const [favorites, setFavorites] = useState<FavoriteRow[]>([]);
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
 
@@ -56,15 +59,25 @@ export default function ProfilePage() {
         setAvatarUrl(profile.avatar_url ? `${profile.avatar_url}?t=${Date.now()}` : null);
       }
 
-      const [wl, rv, favs] = await Promise.all([
+      const [wl, rv, favs, watched, ratingRows] = await Promise.all([
         supabase.from("watchlist").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
         supabase.from("reviews").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
         supabase.from("favorites").select("movie_id, movie_title, poster_path").eq("user_id", session.user.id),
+        supabase.from("watched").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
+        // The actual scores, so the distribution chart is real data rather
+        // than a shape invented to look busy.
+        supabase.from("reviews").select("rating").eq("user_id", session.user.id),
       ]);
 
       setWatchlistCount(wl.count || 0);
       setReviewsCount(rv.count || 0);
       setFavorites(favs.data || []);
+      setWatchedCount(watched.count || 0);
+      setRatings(
+        (ratingRows.data || [])
+          .map((r: { rating: number | null }) => r.rating)
+          .filter((r): r is number => typeof r === "number")
+      );
       setCheckingAuth(false);
     });
   }, [router]);
@@ -259,16 +272,13 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 40, marginBottom: 40, padding: "16px 0", borderTop: "1px solid #1c1c1c", borderBottom: "1px solid #1c1c1c" }}>
-          <div>
-            <p style={{ fontSize: "1.5rem", fontWeight: 700 }}>{watchlistCount}</p>
-            <p style={{ color: "#888", fontSize: "0.8rem" }}>Watchlist</p>
-          </div>
-          <div>
-            <p style={{ fontSize: "1.5rem", fontWeight: 700 }}>{reviewsCount}</p>
-            <p style={{ color: "#888", fontSize: "0.8rem" }}>Reviews</p>
-          </div>
-        </div>
+        <TasteStats
+          watchlistCount={watchlistCount}
+          watchedCount={watchedCount}
+          reviewsCount={reviewsCount}
+          favouritesCount={favorites.length}
+          ratings={ratings}
+        />
 
         <div style={{ marginBottom: 40 }}>
           <h2 style={{ fontSize: "1.2rem", marginBottom: 16 }}>Favorites ({favorites.length}/5)</h2>
