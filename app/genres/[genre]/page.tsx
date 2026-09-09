@@ -140,9 +140,15 @@ export default function GenrePage() {
       </header>
 
       <main className="page-main">
-        <h1 style={{ fontSize: "1.8rem", marginBottom: 24 }}>
-          {currentGenre ? currentGenre.label : "Genre"}
-        </h1>
+        <div className="row-head">
+          <span className="stamp">Browsing</span>
+          <h1 className="page-title">{currentGenre ? currentGenre.label : "Genre"}</h1>
+          <p className="page-lede">
+            {currentGenre
+              ? `Everything ${currentGenre.label.toLowerCase()} we can find, newest first.`
+              : "Pick a genre to start browsing."}
+          </p>
+        </div>
 
         <div className="chip-row" role="list" aria-label="Genres">
           {GENRES.map((g) => (

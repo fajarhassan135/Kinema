@@ -486,7 +486,15 @@ body {
   letter-spacing: -0.02em;
 }
 .page-lede { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--text-sm); }
-.row-head { margin: 0 0 var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
+/* align-items matters: without it the flex children stretch, and the rubber
+   stamp becomes a full-width rectangle instead of a small rotated label. */
+.row-head {
+  margin: 0 0 var(--space-5);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
 .row-head + .row-head { margin-top: var(--space-8); }
 
 /* --- poster grid ---------------------------------------------------------- */
@@ -1183,4 +1191,25 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .rating-bar-fill { animation: none !important; }
+}
+
+/* ==========================================================================
+   Tighter interior header on narrow windows.
+   With the logo on one row and the nav wrapping to the next, the bar was
+   eating a large slice of a phone screen before any content appeared.
+   ========================================================================== */
+@media (max-width: 620px) {
+  .app-bar {
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
+    row-gap: var(--space-1);
+  }
+  .nav-rail { flex: 1; justify-content: space-between; }
+  .nav-item { padding: 4px 2px; }
+  /* The logo shares the first row with the nav rather than owning one. */
+  .app-bar-logo { width: 30px; height: 30px; }
+  .page-main { padding-top: var(--space-5); }
+  .row-head { gap: var(--space-1); margin-bottom: var(--space-4); }
+  /* A rotated stamp needs a little breathing room or it clips its own corner. */
+  .stamp { transform: rotate(-1.5deg); }
 }
